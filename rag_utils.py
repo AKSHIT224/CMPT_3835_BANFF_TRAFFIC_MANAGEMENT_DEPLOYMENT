@@ -36,7 +36,7 @@ def get_gemini_model():
 
     genai.configure(api_key=api_key)
     # Use flash (fast) or pro (stronger)
-    return genai.GenerativeModel("gemini-1.5-flash")
+    return genai.GenerativeModel("gemini-1.0-pro")
 
 
 # ---------------------------------------------------------
