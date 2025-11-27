@@ -160,3 +160,4 @@ def rag_answer(query: str, df: pd.DataFrame):
     context = build_context_text(top_doc_ids, documents)
     answer = query_llm(query, context, gemini_model)
     return answer
+    
