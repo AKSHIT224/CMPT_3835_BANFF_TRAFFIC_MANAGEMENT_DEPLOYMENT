@@ -13,6 +13,8 @@ from xai_utils import (
     plot_shap_summary,
 )
 
+from rag_utils import rag_answer  # RAG-based chatbot helper
+
 # -----------------------------
 # BASIC CONFIG
 # -----------------------------
@@ -68,7 +70,7 @@ else:
 st.sidebar.title("Navigation")
 page = st.sidebar.radio(
     "Go to:",
-    ["Home", "EDA", "Model & Prediction", "XAI"]
+    ["Home", "EDA", "Model & Prediction", "XAI", "RAG Chatbot"]
 )
 
 
@@ -86,6 +88,7 @@ def show_home():
         - Show how the ML model is performing
         - Provide a simple prediction demo for daily visitors
         - Show XAI graphs to explain the model
+        - Provide a RAG-based chatbot interface for natural language questions
 
         Data source: final_selected_features.csv  
         Best model: tuned XGBoost (saved as best_model.pkl)
@@ -260,6 +263,59 @@ def show_xai():
 
 
 # -----------------------------
+# RAG CHATBOT PAGE
+# -----------------------------
+def show_rag_chatbot():
+    st.title("RAG-based Chatbot – Banff Visitors")
+
+    st.write(
+        """
+        This chatbot uses a simple Retrieval-Augmented Generation (RAG) pipeline.
+
+        It:
+        - Converts the Banff dataset into short text descriptions.
+        - Retrieves the most relevant pieces of text for your question.
+        - Uses a language model (Gemini 1.5) to answer based on that context.
+
+        You can ask general questions about patterns in the Banff visitor data.
+        """
+    )
+
+    # Initialize chat history in session state
+    if "rag_history" not in st.session_state:
+        st.session_state["rag_history"] = []
+
+    # Text input with a key so we can clear it after each question
+    user_question = st.text_input(
+        "Ask a question about the Banff visitor data:",
+        placeholder="e.g., Which features are important for high visitor days?",
+        key="rag_question",
+    )
+
+    if st.button("Get answer"):
+        q = st.session_state.rag_question.strip()
+        if q:
+            with st.spinner("Thinking..."):
+                answer = rag_answer(q, df)
+
+            # Save to history
+            st.session_state.rag_history.append({"q": q, "a": answer})
+            # Clear the input box for the next question
+            st.session_state.rag_question = ""
+
+    st.subheader("Conversation")
+
+    if not st.session_state.rag_history:
+        st.info("Ask a question above to start the conversation.")
+    else:
+        # Show all previous Q&A (most recent at bottom)
+        for item in st.session_state.rag_history:
+            st.markdown(f"**Q:** {item['q']}")
+            st.markdown(f"**A:** {item['a']}")
+            st.markdown("---")
+
+
+# -----------------------------
 # ROUTER
 # -----------------------------
 if page == "Home":
@@ -270,3 +326,5 @@ elif page == "Model & Prediction":
     show_model_and_prediction()
 elif page == "XAI":
     show_xai()
+elif page == "RAG Chatbot":
+    show_rag_chatbot()

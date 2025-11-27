@@ -6,3 +6,8 @@ xgboost
 matplotlib
 shap
 joblib
+transformers
+sentence-transformers
+torch
+google-generativeai
+
