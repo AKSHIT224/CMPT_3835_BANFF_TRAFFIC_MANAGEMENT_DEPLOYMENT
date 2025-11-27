@@ -2,6 +2,7 @@ import os
 import pandas as pd
 from sentence_transformers import SentenceTransformer, util
 import google.generativeai as genai
+import streamlit as st
 
 
 # ---------------------------------------------------------
@@ -10,17 +11,31 @@ import google.generativeai as genai
 def get_gemini_model():
     """
     Configure and return a Gemini model.
-    Expects GEMINI_API_KEY in environment variables or Streamlit secrets.
+    Tries Streamlit secrets first, then environment variable.
     """
-    api_key = os.getenv("AIzaSyBnNzsKOwcP9Mh_gsnzx0GtAbdZZCLUnM8")
+    api_key = None
+
+    # 1) Try Streamlit secrets (for Streamlit Cloud)
+    try:
+        if "GEMINI_API_KEY" in st.secrets:
+            api_key = st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        # st.secrets may not exist outside Streamlit
+        pass
+
+    # 2) Fallback to environment variable (for local testing)
+    if not api_key:
+        api_key = os.getenv("GEMINI_API_KEY")
+
     if not api_key:
         raise ValueError(
             "GEMINI_API_KEY is not set. "
-            "Set it in your environment or Streamlit secrets."
+            "Set it in Streamlit secrets (for cloud) or as an environment variable "
+            "GEMINI_API_KEY (for local testing)."
         )
 
     genai.configure(api_key=api_key)
-    # You can switch between 'gemini-1.5-flash' and 'gemini-1.5-pro'
+    # Use flash (fast) or pro (stronger)
     return genai.GenerativeModel("gemini-1.5-flash")
 
 
@@ -42,7 +57,6 @@ def build_documents_from_banff(df: pd.DataFrame):
         "the number of visitors that day."
     )
 
-    # Build a simple narrative from a sample of rows
     narrative = "Here are some example days from the Banff traffic and visitor dataset:\n"
     sample = df.head(50)  # limit to keep context small
 
@@ -76,7 +90,6 @@ def build_rag_components(df: pd.DataFrame):
     """
     documents = build_documents_from_banff(df)
 
-    # sentence-transformer for retrieval
     embedder = SentenceTransformer("all-MiniLM-L6-v2")
 
     doc_embeddings = {
@@ -85,7 +98,6 @@ def build_rag_components(df: pd.DataFrame):
     }
 
     gemini_model = get_gemini_model()
-
     return documents, doc_embeddings, embedder, gemini_model
 
 
@@ -132,7 +144,6 @@ def query_llm(query: str, context: str, model):
     )
 
     response = model.generate_content(prompt)
-    # response.text holds the main answer
     return (response.text or "").strip()
 
 
