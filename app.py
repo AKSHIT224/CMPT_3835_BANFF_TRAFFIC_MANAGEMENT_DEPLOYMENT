@@ -88,7 +88,7 @@ def show_home():
         - Show how the ML model is performing
         - Provide a simple prediction demo for daily visitors
         - Show XAI graphs to explain the model
-        - Provide a RAG-based chatbot interface for natural language questions
+        - Provide a simple RAG-style chatbot interface for natural language questions
 
         Data source: final_selected_features.csv  
         Best model: tuned XGBoost (saved as best_model.pkl)
@@ -270,14 +270,15 @@ def show_rag_chatbot():
 
     st.write(
         """
-        This chatbot uses a simple Retrieval-Augmented Generation (RAG) pipeline.
+        This chatbot uses a simple Retrieval-Augmented Generation (RAG) style pipeline.
 
         It:
         - Converts the Banff dataset into short text descriptions.
-        - Retrieves the most relevant pieces of text for your question.
-        - Uses a small local language model (via `transformers`) to answer based on that context.
+        - Uses TF–IDF similarity to retrieve rows that are relevant to your question.
+        - Builds a small numeric summary (for example, busy months) and
+          shows example days from the dataset.
 
-        You can ask general questions about patterns in the Banff visitor data.
+        Everything runs on the same dataset and does **not** call any paid API.
         """
     )
 
@@ -290,7 +291,7 @@ def show_rag_chatbot():
     # Text input linked to session_state key
     user_question = st.text_input(
         "Ask a question about the Banff visitor data:",
-        placeholder="e.g., Which features are important for high visitor days?",
+        placeholder="e.g., Which months are important busy seasons?",
         key="rag_question",
     )
 
@@ -302,9 +303,8 @@ def show_rag_chatbot():
 
             # Save to history
             st.session_state.rag_history.append({"q": q, "a": answer})
-            # IMPORTANT: Do NOT reset st.session_state.rag_question here
-            # Streamlit 1.51 does not like modifying widget state after creation.
-            # If you want an empty box, you can clear it manually in the UI.
+            # (We don't clear the text box here because Streamlit 1.51
+            #  complains if we modify widget state after creation.)
 
     st.subheader("Conversation")
 
