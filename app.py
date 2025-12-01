@@ -88,7 +88,7 @@ def show_home():
         - Show how the ML model is performing
         - Provide a simple prediction demo for daily visitors
         - Show XAI graphs to explain the model
-        - Provide a simple RAG-style chatbot interface for natural language questions
+        - Provide a RAG-based chatbot interface for natural language questions
 
         Data source: final_selected_features.csv  
         Best model: tuned XGBoost (saved as best_model.pkl)
@@ -270,15 +270,16 @@ def show_rag_chatbot():
 
     st.write(
         """
-        This chatbot uses a simple Retrieval-Augmented Generation (RAG) style pipeline.
+        This chatbot uses a simple Retrieval-Augmented Generation (RAG)-style pipeline.
 
         It:
         - Converts the Banff dataset into short text descriptions.
-        - Uses TF–IDF similarity to retrieve rows that are relevant to your question.
-        - Builds a small numeric summary (for example, busy months) and
-          shows example days from the dataset.
+        - Uses TF-IDF to retrieve the most relevant example days for your question.
+        - Builds a small numeric summary (months / weekends / holidays) when your question
+          is about those topics.
+        - Combines the summary and examples into a natural-language answer.
 
-        Everything runs on the same dataset and does **not** call any paid API.
+        Everything runs locally in this app – no external AI API is called.
         """
     )
 
@@ -291,7 +292,7 @@ def show_rag_chatbot():
     # Text input linked to session_state key
     user_question = st.text_input(
         "Ask a question about the Banff visitor data:",
-        placeholder="e.g., Which months are important busy seasons?",
+        placeholder="e.g., Which months are busy? Do weekends have more visitors?",
         key="rag_question",
     )
 
@@ -303,8 +304,8 @@ def show_rag_chatbot():
 
             # Save to history
             st.session_state.rag_history.append({"q": q, "a": answer})
-            # (We don't clear the text box here because Streamlit 1.51
-            #  complains if we modify widget state after creation.)
+            # We do not reset st.session_state.rag_question here
+            # (Streamlit 1.51 doesn't like changing widget state after creation).
 
     st.subheader("Conversation")
 

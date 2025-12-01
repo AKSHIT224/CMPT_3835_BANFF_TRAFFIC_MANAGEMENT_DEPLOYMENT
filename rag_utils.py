@@ -6,51 +6,51 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 # -------------------------------------------------------------------
-# 0. Small helpers
+# 1. Helpers to turn each row into a short text description
 # -------------------------------------------------------------------
 
 
-_MONTH_MAP = {
-    1: "January",
-    2: "February",
-    3: "March",
-    4: "April",
-    5: "May",
-    6: "June",
-    7: "July",
-    8: "August",
-    9: "September",
-    10: "October",
-    11: "November",
-    12: "December",
-}
-
-
-def _to_month_name(value) -> str:
-    """Convert numeric month to a nice month name if possible."""
+def _month_name(val) -> str:
+    """Convert a numeric month to a readable name, if possible."""
+    month_map = {
+        1: "January",
+        2: "February",
+        3: "March",
+        4: "April",
+        5: "May",
+        6: "June",
+        7: "July",
+        8: "August",
+        9: "September",
+        10: "October",
+        11: "November",
+        12: "December",
+    }
     try:
-        m_int = int(value)
-        if 1 <= m_int <= 12:
-            return _MONTH_MAP[m_int]
-    except (TypeError, ValueError):
-        pass
-    return str(value)
+        num = int(val)
+        return month_map.get(num, str(val))
+    except Exception:
+        return str(val)
 
 
-def _flag_to_text(flag, positive: str, negative: str) -> str:
-    """
-    Turn 0/1 (or 0.0/1.0) into readable text like 'weekend' vs 'weekday'.
-    """
-    if flag in (1, 1.0, "1", "1.0", True):
-        return positive
-    if flag in (0, 0.0, "0", "0.0", False):
-        return negative
-    return "unknown"
+def _bool_flag_to_text(val, weekend=True) -> str:
+    """Map 0/1 flags to friendly text."""
+    true_labels = {1, 1.0, "1", "True", "true", True}
+
+    if weekend:
+        return "weekend" if val in true_labels else "weekday"
+    else:
+        return "holiday" if val in true_labels else "non-holiday"
 
 
-# -------------------------------------------------------------------
-# 1. Convert each row of the Banff dataframe into a short text description
-# -------------------------------------------------------------------
+def _safe_number(val):
+    """Return val rounded if numeric, otherwise 'unknown'."""
+    try:
+        if pd.isna(val):
+            return "unknown"
+        return float(val)
+    except Exception:
+        return "unknown"
 
 
 def _row_to_text(row: pd.Series, idx: int) -> str:
@@ -58,26 +58,29 @@ def _row_to_text(row: pd.Series, idx: int) -> str:
     Turn a single row into a short natural-language description.
     We handle missing columns safely with .get().
     """
-    # Basic fields
-    raw_month = row.get("month", "unknown")
-    month_name = _to_month_name(raw_month)
+    date = row.get("date", "unknown date")
+
+    month_raw = row.get("month", "unknown")
+    month_txt = _month_name(month_raw)
 
     dow = row.get("day_of_week", "unknown weekday")
-    is_weekend = _flag_to_text(row.get("is_weekend", "unknown"),
-                               "weekend", "weekday")
-    is_holiday = _flag_to_text(row.get("is_holiday", "unknown"),
-                               "holiday", "non-holiday")
 
-    visitors = row.get("daily_visits.1", row.get("daily_visits", "unknown"))
-    rolling_7 = row.get("rolling_7", "unknown")
-    lag_1 = row.get("lag_1", "unknown")
-    lag_7 = row.get("lag_7", "unknown")
+    is_weekend_raw = row.get("is_weekend", "unknown")
+    is_holiday_raw = row.get("is_holiday", "unknown")
+
+    weekend_txt = _bool_flag_to_text(is_weekend_raw, weekend=True) if is_weekend_raw != "unknown" else "unknown weekend/weekday"
+    holiday_txt = _bool_flag_to_text(is_holiday_raw, weekend=False) if is_holiday_raw != "unknown" else "unknown holiday flag"
+
+    visitors = _safe_number(row.get("daily_visits.1", row.get("daily_visits", "unknown")))
+    rolling_7 = _safe_number(row.get("rolling_7", "unknown"))
+    lag_1 = _safe_number(row.get("lag_1", "unknown"))
+    lag_7 = _safe_number(row.get("lag_7", "unknown"))
 
     return (
-        f"Row {idx}: On a day in {month_name}, {dow}; "
-        f"{is_weekend}, {is_holiday}, the visitors were {visitors}. "
-        f"The rolling 7-day average was {rolling_7}, "
-        f"lag_1 was {lag_1}, and lag_7 was {lag_7}."
+        f"Row {idx}: On {date} (a day in {month_txt}, {dow}; "
+        f"{weekend_txt}, {holiday_txt}), the visitors were {visitors}. "
+        f"The rolling 7-day average was {rolling_7}, lag_1 was {lag_1}, "
+        f"and lag_7 was {lag_7}."
     )
 
 
@@ -163,124 +166,141 @@ def retrieve_context(query: str, df: pd.DataFrame, top_k: int = 5) -> list[str]:
 
 
 # -------------------------------------------------------------------
-# 3A. Small numeric summary for "busy months"
+# 3. Simple aggregate summaries (months / weekends / holidays)
 # -------------------------------------------------------------------
 
 
-def _month_busy_summary(df: pd.DataFrame,
-                        target_col: str = "daily_visits.1",
-                        top_k: int = 3) -> str | None:
-    """
-    Compute a simple 'busy months' summary from the dataset.
-    Returns a short text like:
-    'April (~4000 visitors/day), July (~3800 visitors/day), ...'
-    """
-    if target_col not in df.columns or "month" not in df.columns:
+def _safe_group_mean(df: pd.DataFrame, value_col: str, group_col: str):
+    """Return mean visitors by group_col, or None if columns missing."""
+    if value_col not in df.columns or group_col not in df.columns:
         return None
-
-    # Drop NaNs, groupby month, sort by mean visitors
-    tmp = (
-        df[["month", target_col]]
+    gb = (
+        df[[group_col, value_col]]
         .dropna()
-        .groupby("month")[target_col]
+        .groupby(group_col)[value_col]
         .mean()
         .sort_values(ascending=False)
-        .head(top_k)
     )
-
-    if tmp.empty:
+    if gb.empty:
         return None
+    return gb
 
-    pieces = []
-    for m_val, avg_vis in tmp.items():
-        m_name = _to_month_name(m_val)
-        pieces.append(f"{m_name} (~{avg_vis:.0f} visitors/day)")
 
-    return ", ".join(pieces)
+def _build_aggregate_summary(query: str, df: pd.DataFrame) -> str:
+    """
+    Build a short numeric summary based on the type of question.
+    Currently handles:
+      - busy months / seasons
+      - weekend vs weekday
+      - holiday vs non-holiday
+    """
+    if df is None or df.empty:
+        return ""
+
+    q = query.lower()
+    value_col = "daily_visits.1"
+    if value_col not in df.columns:
+        # fallback: try daily_visits
+        if "daily_visits" in df.columns:
+            value_col = "daily_visits"
+        else:
+            return ""
+
+    parts: list[str] = []
+
+    # A) By month
+    if any(k in q for k in ["month", "season", "busy"]):
+        by_month = _safe_group_mean(df, value_col, "month")
+        if by_month is not None:
+            top = by_month.head(3)
+            month_bits = [
+                f"{_month_name(m)} (~{v:.0f} visitors/day)" for m, v in top.items()
+            ]
+            parts.append(
+                "The months with the highest average daily visitors are: "
+                + ", ".join(month_bits)
+                + ". These months look like the busier period in this dataset."
+            )
+
+    # B) Weekend vs weekday
+    if any(k in q for k in ["weekend", "weekday"]):
+        by_weekend = _safe_group_mean(df, value_col, "is_weekend")
+        if by_weekend is not None:
+            d = by_weekend.to_dict()
+            weekend_val = d.get(1, d.get(1.0, None))
+            weekday_val = d.get(0, d.get(0.0, None))
+            if weekend_val is not None and weekday_val is not None:
+                parts.append(
+                    f"On average, weekends have about {weekend_val:.0f} visitors/day "
+                    f"versus {weekday_val:.0f} visitors/day on weekdays."
+                )
+
+    # C) Holiday vs non-holiday
+    if "holiday" in q:
+        by_holiday = _safe_group_mean(df, value_col, "is_holiday")
+        if by_holiday is not None:
+            d = by_holiday.to_dict()
+            holiday_val = d.get(1, d.get(1.0, None))
+            nonholiday_val = d.get(0, d.get(0.0, None))
+            if holiday_val is not None and nonholiday_val is not None:
+                parts.append(
+                    f"Holidays have about {holiday_val:.0f} visitors/day, "
+                    f"compared to {nonholiday_val:.0f} on non-holidays."
+                )
+
+    if not parts:
+        return ""
+
+    return "### Short data-based summary\n\n" + " ".join(parts) + "\n\n"
 
 
 # -------------------------------------------------------------------
-# 3B. "Answer" builder (no external LLM, just summarises context)
+# 4. "Answer" builder (no external LLM, just summaries + examples)
 # -------------------------------------------------------------------
 
 
 def _build_answer_from_context(
-    query: str,
-    context_docs: list[str],
-    df: pd.DataFrame,
-    target_col: str = "daily_visits.1",
+    query: str, context_docs: list[str], df: pd.DataFrame
 ) -> str:
     """
-    Build a simple human-readable answer string from the retrieved documents.
-    This is NOT a true LLM, but it's enough to show RAG-style behaviour
+    Build a simple human-readable answer string from:
+      - small numeric summary (optional)
+      - retrieved example rows
+    This is NOT a true LLM, but it is enough to show RAG-style behaviour
     without any external API.
     """
+    summary = _build_aggregate_summary(query, df)
 
-    # Decide if we should include a month-based summary (Option A)
-    q_lower = query.lower()
-    wants_months = (
-        "month" in q_lower
-        or "months" in q_lower
-        or "season" in q_lower
-        or "busy" in q_lower
-    )
-
-    month_summary = None
-    if wants_months:
-        month_summary = _month_busy_summary(df, target_col=target_col)
-
-    # If no context docs at all
-    if not context_docs:
-        base_msg = (
-            "I could not find any rows in the dataset that match your "
-            "question well. Try asking in simpler words, for example:\n\n"
-            "- 'Which months are busy?'\n"
-            "- 'Do weekends have more visitors than weekdays?'\n"
-            "- 'How do holidays change visitor numbers?'\n"
+    if not context_docs and not summary:
+        return (
+            "I could not find any rows in the dataset that match your question well. "
+            "Try asking in simpler words (for example: 'Which months are busy?' "
+            "or 'Do weekends have more visitors than weekdays?')."
         )
-        # If we do have a numeric summary, show that even if context is empty
-        if wants_months and month_summary:
-            return (
-                "### Short data-based summary\n\n"
-                f"Based on the dataset, the months with the highest "
-                f"average daily visitors are:\n\n"
-                f"{month_summary}. These months can be considered the "
-                "'busy season' in this dataset.\n\n"
-                + base_msg
-            )
-        return base_msg
 
-    # Option B: build bullet list from retrieved rows
     bullets = "\n".join(f"- {doc}" for doc in context_docs)
 
-    # Combine A (numeric summary) + B (example rows)
-    parts = []
+    answer_parts = []
 
-    if wants_months and month_summary:
-        parts.append(
-            "### Short data-based summary\n\n"
-            "Based on the dataset, the months with the highest "
-            "average daily visitors are:\n\n"
-            f"{month_summary}. These months can be considered the "
-            "'busy season' in this dataset.\n"
-        )
+    if summary:
+        answer_parts.append(summary)
 
-    parts.append("### Example days from the dataset\n")
-    parts.append("You asked:\n\n")
-    parts.append(f"**{query}**\n\n")
-    parts.append("Here are some relevant example days from the Banff dataset:\n\n")
-    parts.append(bullets)
-    parts.append(
-        "\n\nFrom these examples, you can see how factors like month, "
-        "weekend/holiday status, and recent visitor trends relate to "
-        "the number of visitors on those days."
+    answer_parts.append("### Example days from the dataset\n")
+    answer_parts.append("You asked:\n\n")
+    answer_parts.append(f"**{query}**\n\n")
+    answer_parts.append("Here are some relevant example days from the Banff dataset:\n\n")
+    answer_parts.append(f"{bullets}\n\n")
+    answer_parts.append(
+        "From these examples, you can see how factors like month, "
+        "weekend/holiday status, and recent visitor trends relate to the "
+        "number of visitors on those days."
     )
 
-    return "\n".join(parts)
+    return "".join(answer_parts)
 
 
 # -------------------------------------------------------------------
-# 4. Public function used by app.py
+# 5. Public function used by app.py
 # -------------------------------------------------------------------
 
 
@@ -289,18 +309,13 @@ def rag_answer(query: str, df: pd.DataFrame) -> str:
     Main entry point called by app.py.
 
     - Takes the user's question and the Banff dataframe
+    - Computes simple summary stats (months / weekends / holidays) when relevant
     - Retrieves similar rows using TF-IDF
-    - Builds a short numeric summary (Option A) when relevant
-    - Returns a text answer with both summary + example rows (Option B)
+    - Returns a plain-text answer built from those pieces
     """
     if not isinstance(query, str) or not query.strip():
         return "Please type a non-empty question about the Banff visitor data."
 
     context_docs = retrieve_context(query, df, top_k=5)
-    answer = _build_answer_from_context(
-        query,
-        context_docs,
-        df,
-        target_col="daily_visits.1",  # adjust if your target col name changes
-    )
+    answer = _build_answer_from_context(query, context_docs, df)
     return answer
