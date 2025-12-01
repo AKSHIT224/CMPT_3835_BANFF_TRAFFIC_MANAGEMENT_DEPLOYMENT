@@ -275,17 +275,19 @@ def show_rag_chatbot():
         It:
         - Converts the Banff dataset into short text descriptions.
         - Retrieves the most relevant pieces of text for your question.
-        - Uses a language model (Gemini 1.5) to answer based on that context.
+        - Uses a language model (Gemini) to answer based on that context.
 
         You can ask general questions about patterns in the Banff visitor data.
         """
     )
 
-    # Initialize chat history in session state
+    # --- Initialize session state BEFORE widgets ---
+    if "rag_question" not in st.session_state:
+        st.session_state.rag_question = ""
     if "rag_history" not in st.session_state:
-        st.session_state["rag_history"] = []
+        st.session_state.rag_history = []
 
-    # Text input with a key so we can clear it after each question
+    # Text input linked to session_state key
     user_question = st.text_input(
         "Ask a question about the Banff visitor data:",
         placeholder="e.g., Which features are important for high visitor days?",
@@ -293,15 +295,16 @@ def show_rag_chatbot():
     )
 
     if st.button("Get answer"):
-        q = st.session_state.rag_question.strip()
+        q = (st.session_state.rag_question or "").strip()
         if q:
             with st.spinner("Thinking..."):
                 answer = rag_answer(q, df)
 
             # Save to history
             st.session_state.rag_history.append({"q": q, "a": answer})
-            # Clear the input box for the next question
-            st.session_state.rag_question = ""
+            # IMPORTANT: Do NOT reset st.session_state.rag_question here
+            # Streamlit 1.51 does not like modifying widget state after creation.
+            # If you really want to clear it, you can just manually delete text in the UI.
 
     st.subheader("Conversation")
 
