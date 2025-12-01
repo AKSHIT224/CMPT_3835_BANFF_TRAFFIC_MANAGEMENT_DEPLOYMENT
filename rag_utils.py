@@ -3,27 +3,56 @@ import pandas as pd
 from sentence_transformers import SentenceTransformer, util
 import google.generativeai as genai
 import streamlit as st
+from google.api_core.exceptions import NotFound as GoogleNotFound
 
 
 # ---------------------------------------------------------
-# 0. Gemini setup
+# 0. Helpers for model + API key
 # ---------------------------------------------------------
-def get_gemini_model():
+def _get_model_name() -> str:
     """
-    Configure and return a Gemini model.
-    Tries Streamlit secrets first, then environment variable.
+    Decide which Gemini model name to use.
+
+    Priority:
+      1) Streamlit secret GEMINI_MODEL_NAME
+      2) Environment variable GEMINI_MODEL_NAME
+      3) Default: "gemini-pro" (most widely supported text model)
+    """
+    model_name = None
+
+    # Try Streamlit secrets
+    try:
+        if "GEMINI_MODEL_NAME" in st.secrets:
+            model_name = st.secrets["GEMINI_MODEL_NAME"]
+    except Exception:
+        # st.secrets may not exist when running locally
+        pass
+
+    # Try environment variable
+    if not model_name:
+        model_name = os.getenv("GEMINI_MODEL_NAME")
+
+    # Final fallback
+    if not model_name:
+        model_name = "gemini-pro"
+
+    return model_name
+
+
+def _get_api_key() -> str:
+    """
+    Get API key from:
+      1) Streamlit secrets GEMINI_API_KEY
+      2) Environment variable GEMINI_API_KEY
     """
     api_key = None
 
-    # 1) Try Streamlit secrets (for Streamlit Cloud)
     try:
         if "GEMINI_API_KEY" in st.secrets:
             api_key = st.secrets["GEMINI_API_KEY"]
     except Exception:
-        # st.secrets may not exist outside Streamlit (e.g., local run)
         pass
 
-    # 2) Fallback to environment variable (for local testing)
     if not api_key:
         api_key = os.getenv("GEMINI_API_KEY")
 
@@ -34,11 +63,18 @@ def get_gemini_model():
             "GEMINI_API_KEY (for local testing)."
         )
 
-    # Configure Gemini SDK with the key
-    genai.configure(api_key=api_key)
+    return api_key
 
-    # Use gemini-1.5-flash (fast, cheap, good for chat-style RAG)
-    return genai.GenerativeModel("gemini-1.5-flash")
+
+def get_gemini_model():
+    """
+    Configure and return a Gemini model using google-generativeai.
+    """
+    api_key = _get_api_key()
+    model_name = _get_model_name()
+
+    genai.configure(api_key=api_key)
+    return genai.GenerativeModel(model_name)
 
 
 # ---------------------------------------------------------
@@ -136,7 +172,10 @@ def build_context_text(doc_ids, documents):
 def query_llm(query: str, context: str, model):
     """
     Construct a prompt with context and query, and call Gemini.
+    Handles 'model not found' errors gracefully inside Streamlit.
     """
+    model_name = _get_model_name()
+
     prompt = (
         "You are an assistant helping to analyze Banff visitor and traffic data. "
         "Use ONLY the context below to answer the user's question clearly and simply.\n\n"
@@ -146,11 +185,32 @@ def query_llm(query: str, context: str, model):
         "Answer in 3–5 sentences:"
     )
 
-    response = model.generate_content(prompt)
-
-    # Defensive: handle cases where text is missing
-    text = getattr(response, "text", "") or ""
-    return text.strip()
+    try:
+        response = model.generate_content(prompt)
+        text = getattr(response, "text", "") or ""
+        return text.strip()
+    except GoogleNotFound:
+        # This is the error you're seeing now: model not found for this API version/key
+        msg = (
+            f"Gemini model '{model_name}' is not available for your API key / project. "
+            "Please check that this model name is correct and supported for your key. "
+            "You can change it by setting GEMINI_MODEL_NAME in Streamlit secrets or "
+            "as an environment variable. A common safe choice is 'gemini-pro'."
+        )
+        # Show in the app UI
+        try:
+            st.error(msg)
+        except Exception:
+            pass
+        return msg
+    except Exception as e:
+        # Catch-all for any other API errors so the app doesn't crash
+        msg = f"Error calling Gemini API: {e}"
+        try:
+            st.error(msg)
+        except Exception:
+            pass
+        return "There was an error calling the Gemini API. Please try again later."
 
 
 # ---------------------------------------------------------
