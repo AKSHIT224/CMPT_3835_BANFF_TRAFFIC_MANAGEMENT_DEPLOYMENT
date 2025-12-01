@@ -33,8 +33,8 @@ def _month_name(val) -> str:
         return str(val)
 
 
-def _bool_flag_to_text(val, weekend=True) -> str:
-    """Map 0/1 flags to friendly text."""
+def _bool_flag_to_text(val, weekend: bool = True) -> str:
+    """Map 0/1 flags to friendly text for weekend / holiday."""
     true_labels = {1, 1.0, "1", "True", "true", True}
 
     if weekend:
@@ -48,7 +48,7 @@ def _safe_number(val):
     try:
         if pd.isna(val):
             return "unknown"
-        return float(val)
+        return round(float(val), 1)
     except Exception:
         return "unknown"
 
@@ -58,8 +58,6 @@ def _row_to_text(row: pd.Series, idx: int) -> str:
     Turn a single row into a short natural-language description.
     We handle missing columns safely with .get().
     """
-    date = row.get("date", "unknown date")
-
     month_raw = row.get("month", "unknown")
     month_txt = _month_name(month_raw)
 
@@ -81,14 +79,13 @@ def _row_to_text(row: pd.Series, idx: int) -> str:
 
     visitors = _safe_number(row.get("daily_visits.1", row.get("daily_visits", "unknown")))
     rolling_7 = _safe_number(row.get("rolling_7", "unknown"))
-    lag_1 = _safe_number(row.get("lag_1", "unknown"))
     lag_7 = _safe_number(row.get("lag_7", "unknown"))
+    lag_30 = _safe_number(row.get("lag_30", "unknown"))
 
     return (
-        f"Row {idx}: On {date} (a day in {month_txt}, {dow}; "
-        f"{weekend_txt}, {holiday_txt}), the visitors were {visitors}. "
-        f"The rolling 7-day average was {rolling_7}, lag_1 was {lag_1}, "
-        f"and lag_7 was {lag_7}."
+        f"Row {idx}: A day in {month_txt} ({dow}; {weekend_txt}, {holiday_txt}), "
+        f"visitors = {visitors}, rolling_7 = {rolling_7}, "
+        f"lag_7 = {lag_7}, lag_30 = {lag_30}."
     )
 
 
@@ -101,7 +98,7 @@ def build_documents(df: pd.DataFrame, max_rows: int = 500) -> list[str]:
         return []
 
     sample = df.head(max_rows)
-    documents = []
+    documents: list[str] = []
 
     for i, (_, row) in enumerate(sample.iterrows()):
         documents.append(_row_to_text(row, i))
@@ -114,12 +111,12 @@ def build_documents(df: pd.DataFrame, max_rows: int = 500) -> list[str]:
 # -------------------------------------------------------------------
 
 # Simple in-memory cache so we don't rebuild vectorizer on every call
-_DOCS_CACHE = None
-_VECTORIZER_CACHE = None
+_DOCS_CACHE: list[str] | None = None
+_VECTORIZER_CACHE: TfidfVectorizer | None = None
 _DOC_MATRIX_CACHE = None
 
 
-def _ensure_index(df: pd.DataFrame):
+def _ensure_index(df: pd.DataFrame) -> None:
     """
     Build TF-IDF index for the dataset if not already built.
     Uses module-level globals as a tiny cache.
@@ -150,11 +147,7 @@ def _ensure_index(df: pd.DataFrame):
 
 def retrieve_context(query: str, df: pd.DataFrame, top_k: int = 5) -> list[str]:
     """
-    Given a free-text query, return up to top_k *distinct* document strings.
-
-    We still rank by similarity using TF-IDF, but we skip near-duplicate
-    rows (same text content after 'Row X:') to make the examples
-    more varied for the user / presentation.
+    Given a free-text query, return the top_k most similar document strings.
     """
     _ensure_index(df)
 
@@ -164,41 +157,21 @@ def retrieve_context(query: str, df: pd.DataFrame, top_k: int = 5) -> list[str]:
     q_vec = _VECTORIZER_CACHE.transform([query])
     sims = cosine_similarity(q_vec, _DOC_MATRIX_CACHE)[0]
 
-    # Sort all indices by similarity (highest first)
-    sorted_idx = np.argsort(sims)[::-1]
-
+    # Highest similarity first
+    top_idx = np.argsort(sims)[::-1][:top_k]
     results: list[str] = []
-    seen_canonical: set[str] = set()
 
-    for i in sorted_idx:
-        # If similarity is zero or negative, remaining docs won't help
+    for i in top_idx:
+        # Skip if similarity is zero (no overlap)
         if sims[i] <= 0:
-            break
-
-        doc = _DOCS_CACHE[i]
-
-        # Build a "canonical" version of the text that ignores the row number.
-        # Example: "Row 5: ..." and "Row 3: ..." become the same canonical string.
-        if ":" in doc:
-            canonical = doc.split(":", 1)[1].strip()
-        else:
-            canonical = doc.strip()
-
-        # Skip near-duplicates
-        if canonical in seen_canonical:
             continue
-
-        seen_canonical.add(canonical)
-        results.append(doc)
-
-        if len(results) >= top_k:
-            break
+        results.append(_DOCS_CACHE[i])
 
     return results
 
 
 # -------------------------------------------------------------------
-# 3. Simple aggregate summaries (months / weekends / holidays)
+# 3. Simple aggregate summaries (weekends / rolling_7 / lag features)
 # -------------------------------------------------------------------
 
 
@@ -218,45 +191,40 @@ def _safe_group_mean(df: pd.DataFrame, value_col: str, group_col: str):
     return gb
 
 
+def _subset_for_april_if_mentioned(q: str, df: pd.DataFrame) -> pd.DataFrame:
+    """If user says 'April', focus on month==4, otherwise use full df."""
+    if "april" in q and "month" in df.columns:
+        sub = df[df["month"] == 4]
+        if len(sub) > 0:
+            return sub
+    return df
+
+
 def _build_aggregate_summary(query: str, df: pd.DataFrame) -> str:
     """
     Build a short numeric summary based on the type of question.
-    Currently handles:
-      - busy months / seasons
+    Handles:
       - weekend vs weekday
-      - holiday vs non-holiday
+      - rolling 7-day averages
+      - standout busy days vs rolling_7
+      - lag features (lag_7, lag_14, lag_30)
     """
     if df is None or df.empty:
         return ""
 
     q = query.lower()
-    value_col = "daily_visits.1"
-    if value_col not in df.columns:
-        # fallback: try daily_visits
-        if "daily_visits" in df.columns:
-            value_col = "daily_visits"
-        else:
-            return ""
 
+    # Choose value column
+    value_col = "daily_visits.1" if "daily_visits.1" in df.columns else "daily_visits"
+    if value_col not in df.columns:
+        return ""
+
+    base_df = _subset_for_april_if_mentioned(q, df)
     parts: list[str] = []
 
-    # A) By month
-    if any(k in q for k in ["month", "season", "busy"]):
-        by_month = _safe_group_mean(df, value_col, "month")
-        if by_month is not None:
-            top = by_month.head(3)
-            month_bits = [
-                f"{_month_name(m)} (~{v:.0f} visitors/day)" for m, v in top.items()
-            ]
-            parts.append(
-                "The months with the highest average daily visitors are: "
-                + ", ".join(month_bits)
-                + ". These months look like the busier period in this dataset."
-            )
-
-    # B) Weekend vs weekday
+    # A) Weekends vs weekdays (optionally only April)
     if any(k in q for k in ["weekend", "weekday"]):
-        by_weekend = _safe_group_mean(df, value_col, "is_weekend")
+        by_weekend = _safe_group_mean(base_df, value_col, "is_weekend")
         if by_weekend is not None:
             d = by_weekend.to_dict()
             weekend_val = d.get(1, d.get(1.0, None))
@@ -264,21 +232,65 @@ def _build_aggregate_summary(query: str, df: pd.DataFrame) -> str:
             if weekend_val is not None and weekday_val is not None:
                 parts.append(
                     f"On average, weekends have about {weekend_val:.0f} visitors/day "
-                    f"versus {weekday_val:.0f} visitors/day on weekdays."
+                    f"versus {weekday_val:.0f} visitors/day on weekdays "
+                    f"in this subset of the data."
                 )
 
-    # C) Holiday vs non-holiday
-    if "holiday" in q:
-        by_holiday = _safe_group_mean(df, value_col, "is_holiday")
-        if by_holiday is not None:
-            d = by_holiday.to_dict()
-            holiday_val = d.get(1, d.get(1.0, None))
-            nonholiday_val = d.get(0, d.get(0.0, None))
-            if holiday_val is not None and nonholiday_val is not None:
+    # B) Rolling-7 behaviour (trend vs actual)
+    if any(k in q for k in ["rolling", "7-day", "7 day"]):
+        if "rolling_7" in base_df.columns:
+            valid = base_df[[value_col, "rolling_7"]].dropna()
+            if len(valid) > 0:
+                mean_vis = valid[value_col].mean()
+                mean_roll = valid["rolling_7"].mean()
+                diff = valid[value_col] - valid["rolling_7"]
+                mean_diff = diff.mean()
+                if mean_diff > 0:
+                    relation = "above"
+                elif mean_diff < 0:
+                    relation = "below"
+                else:
+                    relation = "in line with"
                 parts.append(
-                    f"Holidays have about {holiday_val:.0f} visitors/day, "
-                    f"compared to {nonholiday_val:.0f} on non-holidays."
+                    "The 7-day rolling average smooths daily ups and downs. "
+                    f"In this subset, actual visitors average about {mean_vis:.0f} per day, "
+                    f"while the rolling average is around {mean_roll:.0f}. "
+                    f"On a typical day, actual counts are about {abs(mean_diff):.0f} visitors "
+                    f"{relation} the rolling trend."
                 )
+
+    # C) Standout busy days compared to rolling_7
+    if any(k in q for k in ["stand out", "unusually", "much busier"]):
+        if "rolling_7" in base_df.columns:
+            valid = base_df[[value_col, "rolling_7"]].dropna()
+            if len(valid) > 0:
+                diff = valid[value_col] - valid["rolling_7"]
+                top = diff.nlargest(3)
+                parts.append(
+                    "Some days have visitor counts far above the recent 7-day trend. "
+                    "For example, the three biggest jumps are about "
+                    + ", ".join(f"{v:.0f} visitors above the rolling average" for v in top.values)
+                    + "."
+                )
+
+    # D) Lag behaviour (lag_7, lag_14, lag_30)
+    if "lag" in q:
+        lag_sentences: list[str] = []
+        for lag_col, label in [
+            ("lag_7", "7 days ago"),
+            ("lag_14", "14 days ago"),
+            ("lag_30", "30 days ago"),
+        ]:
+            if lag_col in base_df.columns:
+                valid = base_df[[value_col, lag_col]].dropna()
+                if len(valid) > 5:
+                    corr = valid[value_col].corr(valid[lag_col])
+                    lag_sentences.append(
+                        f"Visitor counts have a correlation of about {corr:.2f} "
+                        f"with values from {label}."
+                    )
+        if lag_sentences:
+            parts.append("Looking at lag features, we see that " + " ".join(lag_sentences))
 
     if not parts:
         return ""
@@ -287,7 +299,7 @@ def _build_aggregate_summary(query: str, df: pd.DataFrame) -> str:
 
 
 # -------------------------------------------------------------------
-# 4. "Answer" builder (no external LLM, just summaries + examples)
+# 4. "Answer" builder (summaries + example rows, no external LLM)
 # -------------------------------------------------------------------
 
 
@@ -298,35 +310,33 @@ def _build_answer_from_context(
     Build a simple human-readable answer string from:
       - small numeric summary (optional)
       - retrieved example rows
-    This is NOT a true LLM, but it is enough to show RAG-style behaviour
-    without any external API.
     """
     summary = _build_aggregate_summary(query, df)
 
     if not context_docs and not summary:
         return (
             "I could not find any rows in the dataset that match your question well. "
-            "Try asking in simpler words (for example: 'Which months are busy?' "
-            "or 'Do weekends have more visitors than weekdays?')."
+            "Try asking in simpler words (for example: "
+            "'Do weekends show higher visitor numbers than weekdays in April?')."
         )
 
     bullets = "\n".join(f"- {doc}" for doc in context_docs)
-
-    answer_parts = []
+    answer_parts: list[str] = []
 
     if summary:
         answer_parts.append(summary)
 
-    answer_parts.append("### Example days from the dataset\n")
-    answer_parts.append("You asked:\n\n")
-    answer_parts.append(f"**{query}**\n\n")
-    answer_parts.append("Here are some relevant example days from the Banff dataset:\n\n")
-    answer_parts.append(f"{bullets}\n\n")
-    answer_parts.append(
-        "From these examples, you can see how factors like month, "
-        "weekend/holiday status, and recent visitor trends relate to the "
-        "number of visitors on those days."
-    )
+    if context_docs:
+        answer_parts.append("### Example days from the dataset\n\n")
+        answer_parts.append("You asked:\n\n")
+        answer_parts.append(f"**{query}**\n\n")
+        answer_parts.append("Here are some relevant example days from the Banff dataset:\n\n")
+        answer_parts.append(f"{bullets}\n\n")
+        answer_parts.append(
+            "From these examples, you can see how factors like month, "
+            "weekend/holiday status, and recent visitor trends relate to the "
+            "number of visitors on those days."
+        )
 
     return "".join(answer_parts)
 
@@ -341,8 +351,8 @@ def rag_answer(query: str, df: pd.DataFrame) -> str:
     Main entry point called by app.py.
 
     - Takes the user's question and the Banff dataframe
-    - Computes simple summary stats (months / weekends / holidays) when relevant
-    - Retrieves similar rows using TF-IDF, with basic de-duplication for variety
+    - Computes simple summary stats when relevant
+    - Retrieves similar rows using TF-IDF
     - Returns a plain-text answer built from those pieces
     """
     if not isinstance(query, str) or not query.strip():
