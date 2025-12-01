@@ -20,7 +20,7 @@ def get_gemini_model():
         if "GEMINI_API_KEY" in st.secrets:
             api_key = st.secrets["GEMINI_API_KEY"]
     except Exception:
-        # st.secrets may not exist outside Streamlit
+        # st.secrets may not exist outside Streamlit (e.g., local run)
         pass
 
     # 2) Fallback to environment variable (for local testing)
@@ -34,9 +34,11 @@ def get_gemini_model():
             "GEMINI_API_KEY (for local testing)."
         )
 
+    # Configure Gemini SDK with the key
     genai.configure(api_key=api_key)
-    # Use flash (fast) or pro (stronger)
-    return genai.GenerativeModel("gemini-1.0-pro")
+
+    # Use gemini-1.5-flash (fast, cheap, good for chat-style RAG)
+    return genai.GenerativeModel("gemini-1.5-flash")
 
 
 # ---------------------------------------------------------
@@ -90,6 +92,7 @@ def build_rag_components(df: pd.DataFrame):
     """
     documents = build_documents_from_banff(df)
 
+    # Sentence-transformers model for embeddings
     embedder = SentenceTransformer("all-MiniLM-L6-v2")
 
     doc_embeddings = {
@@ -144,7 +147,10 @@ def query_llm(query: str, context: str, model):
     )
 
     response = model.generate_content(prompt)
-    return (response.text or "").strip()
+
+    # Defensive: handle cases where text is missing
+    text = getattr(response, "text", "") or ""
+    return text.strip()
 
 
 # ---------------------------------------------------------
@@ -160,4 +166,3 @@ def rag_answer(query: str, df: pd.DataFrame):
     context = build_context_text(top_doc_ids, documents)
     answer = query_llm(query, context, gemini_model)
     return answer
-    
