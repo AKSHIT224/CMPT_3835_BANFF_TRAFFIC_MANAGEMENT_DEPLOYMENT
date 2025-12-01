@@ -275,7 +275,7 @@ def show_rag_chatbot():
         It:
         - Converts the Banff dataset into short text descriptions.
         - Retrieves the most relevant pieces of text for your question.
-        - Uses a language model (Gemini) to answer based on that context.
+        - Uses a small local language model (via `transformers`) to answer based on that context.
 
         You can ask general questions about patterns in the Banff visitor data.
         """
@@ -304,7 +304,7 @@ def show_rag_chatbot():
             st.session_state.rag_history.append({"q": q, "a": answer})
             # IMPORTANT: Do NOT reset st.session_state.rag_question here
             # Streamlit 1.51 does not like modifying widget state after creation.
-            # If you really want to clear it, you can just manually delete text in the UI.
+            # If you want an empty box, you can clear it manually in the UI.
 
     st.subheader("Conversation")
 

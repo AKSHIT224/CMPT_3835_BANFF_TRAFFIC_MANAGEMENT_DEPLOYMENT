@@ -1,80 +1,32 @@
 import os
 import pandas as pd
 from sentence_transformers import SentenceTransformer, util
-import google.generativeai as genai
+from transformers import pipeline
 import streamlit as st
-from google.api_core.exceptions import NotFound as GoogleNotFound
 
 
 # ---------------------------------------------------------
-# 0. Helpers for model + API key
+# 0. Local LLM setup (Flan-T5 small by default)
 # ---------------------------------------------------------
-def _get_model_name() -> str:
+@st.cache_resource
+def get_local_llm():
     """
-    Decide which Gemini model name to use.
+    Load a small local language model using transformers.
+    Default: google/flan-t5-small (good enough for short answers).
+    No API keys or external billing needed.
 
-    Priority:
-      1) Streamlit secret GEMINI_MODEL_NAME
-      2) Environment variable GEMINI_MODEL_NAME
-      3) Default: "gemini-pro" (most widely supported text model)
+    We cache it so the model is loaded only once per session.
+    The first call may take longer while the model downloads.
     """
-    model_name = None
 
-    # Try Streamlit secrets
-    try:
-        if "GEMINI_MODEL_NAME" in st.secrets:
-            model_name = st.secrets["GEMINI_MODEL_NAME"]
-    except Exception:
-        # st.secrets may not exist when running locally
-        pass
+    model_name = os.getenv("LOCAL_LLM_NAME", "google/flan-t5-small")
 
-    # Try environment variable
-    if not model_name:
-        model_name = os.getenv("GEMINI_MODEL_NAME")
-
-    # Final fallback
-    if not model_name:
-        model_name = "gemini-pro"
-
-    return model_name
-
-
-def _get_api_key() -> str:
-    """
-    Get API key from:
-      1) Streamlit secrets GEMINI_API_KEY
-      2) Environment variable GEMINI_API_KEY
-    """
-    api_key = None
-
-    try:
-        if "GEMINI_API_KEY" in st.secrets:
-            api_key = st.secrets["GEMINI_API_KEY"]
-    except Exception:
-        pass
-
-    if not api_key:
-        api_key = os.getenv("GEMINI_API_KEY")
-
-    if not api_key:
-        raise ValueError(
-            "GEMINI_API_KEY is not set. "
-            "Set it in Streamlit secrets (for cloud) or as an environment variable "
-            "GEMINI_API_KEY (for local testing)."
-        )
-
-    return api_key
-
-
-def get_gemini_model():
-    """
-    Configure and return a Gemini model using google-generativeai.
-    """
-    api_key = _get_api_key()
-    model_name = _get_model_name()
-
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel(model_name)
+    text2text_pipe = pipeline(
+        "text2text-generation",
+        model=model_name,
+        tokenizer=model_name,
+    )
+    return text2text_pipe
 
 
 # ---------------------------------------------------------
@@ -82,7 +34,7 @@ def get_gemini_model():
 # ---------------------------------------------------------
 def build_documents_from_banff(df: pd.DataFrame):
     """
-    Turn the Banff features into readable text so the LLM can use them.
+    Turn the Banff features into readable text so the model can use them.
     We create:
       - doc1: a general description of the dataset
       - doc2: a narrative built from a sample of rows
@@ -119,16 +71,15 @@ def build_documents_from_banff(df: pd.DataFrame):
 
 
 # ---------------------------------------------------------
-# 2. Build embeddings + Gemini model
+# 2. Build embeddings + local LLM
 # ---------------------------------------------------------
 def build_rag_components(df: pd.DataFrame):
     """
-    Build documents from df, create their embeddings, and set up Gemini model.
-    Returns (documents, doc_embeddings, embedder, gemini_model).
+    Build documents from df, create their embeddings, and set up local LLM.
+    Returns (documents, doc_embeddings, embedder, llm_pipe).
     """
     documents = build_documents_from_banff(df)
 
-    # Sentence-transformers model for embeddings
     embedder = SentenceTransformer("all-MiniLM-L6-v2")
 
     doc_embeddings = {
@@ -136,8 +87,8 @@ def build_rag_components(df: pd.DataFrame):
         for doc_id, text in documents.items()
     }
 
-    gemini_model = get_gemini_model()
-    return documents, doc_embeddings, embedder, gemini_model
+    llm_pipe = get_local_llm()
+    return documents, doc_embeddings, embedder, llm_pipe
 
 
 # ---------------------------------------------------------
@@ -167,50 +118,29 @@ def build_context_text(doc_ids, documents):
 
 
 # ---------------------------------------------------------
-# 4. LLM call (Gemini)
+# 4. LLM call (local Flan-T5)
 # ---------------------------------------------------------
-def query_llm(query: str, context: str, model):
+def query_llm(query: str, context: str, llm_pipe):
     """
-    Construct a prompt with context and query, and call Gemini.
-    Handles 'model not found' errors gracefully inside Streamlit.
+    Construct a prompt with context and query, and call the local T5 model.
     """
-    model_name = _get_model_name()
-
     prompt = (
         "You are an assistant helping to analyze Banff visitor and traffic data. "
         "Use ONLY the context below to answer the user's question clearly and simply.\n\n"
         "Summarize patterns and relationships instead of just repeating raw numbers.\n\n"
         f"Context:\n{context}\n\n"
         f"User Question: {query}\n\n"
-        "Answer in 3–5 sentences:"
+        "Answer in 3–5 short sentences."
     )
 
-    try:
-        response = model.generate_content(prompt)
-        text = getattr(response, "text", "") or ""
-        return text.strip()
-    except GoogleNotFound:
-        # This is the error you're seeing now: model not found for this API version/key
-        msg = (
-            f"Gemini model '{model_name}' is not available for your API key / project. "
-            "Please check that this model name is correct and supported for your key. "
-            "You can change it by setting GEMINI_MODEL_NAME in Streamlit secrets or "
-            "as an environment variable. A common safe choice is 'gemini-pro'."
-        )
-        # Show in the app UI
-        try:
-            st.error(msg)
-        except Exception:
-            pass
-        return msg
-    except Exception as e:
-        # Catch-all for any other API errors so the app doesn't crash
-        msg = f"Error calling Gemini API: {e}"
-        try:
-            st.error(msg)
-        except Exception:
-            pass
-        return "There was an error calling the Gemini API. Please try again later."
+    # text2text-generation pipeline returns a list of dicts with 'generated_text'
+    result = llm_pipe(
+        prompt,
+        max_new_tokens=128,
+        do_sample=False,
+    )
+    text = result[0].get("generated_text", "").strip()
+    return text
 
 
 # ---------------------------------------------------------
@@ -221,8 +151,8 @@ def rag_answer(query: str, df: pd.DataFrame):
     Convenience function: build components, retrieve context, and answer.
     For a small number of docs this is OK to recompute each question.
     """
-    documents, doc_embeddings, embedder, gemini_model = build_rag_components(df)
+    documents, doc_embeddings, embedder, llm_pipe = build_rag_components(df)
     top_doc_ids = retrieve_context_ids(query, embedder, doc_embeddings, top_k=2)
     context = build_context_text(top_doc_ids, documents)
-    answer = query_llm(query, context, gemini_model)
+    answer = query_llm(query, context, llm_pipe)
     return answer
