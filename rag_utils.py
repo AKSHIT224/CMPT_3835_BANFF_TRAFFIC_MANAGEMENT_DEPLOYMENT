@@ -1,158 +1,165 @@
-import os
+from __future__ import annotations
+
+import numpy as np
 import pandas as pd
-from sentence_transformers import SentenceTransformer, util
-from transformers import pipeline
-import streamlit as st
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+# -------------------------------------------------------------------
+# 1. Convert each row of the Banff dataframe into a short text description
+# -------------------------------------------------------------------
 
 
-# ---------------------------------------------------------
-# 0. Local LLM setup (Flan-T5 small by default)
-# ---------------------------------------------------------
-@st.cache_resource
-def get_local_llm():
+def _row_to_text(row: pd.Series, idx: int) -> str:
     """
-    Load a small local language model using transformers.
-    Default: google/flan-t5-small (good enough for short answers).
-    No API keys or external billing needed.
-
-    We cache it so the model is loaded only once per session.
-    The first call may take longer while the model downloads.
+    Turn a single row into a short natural-language description.
+    We handle missing columns safely with .get().
     """
+    date = row.get("date", "unknown date")
+    month = row.get("month", "unknown month")
+    dow = row.get("day_of_week", "unknown weekday")
+    is_weekend = row.get("is_weekend", "unknown")
+    is_holiday = row.get("is_holiday", "unknown")
 
-    model_name = os.getenv("LOCAL_LLM_NAME", "google/flan-t5-small")
+    visitors = row.get("daily_visits.1", row.get("daily_visits", "unknown"))
+    rolling_7 = row.get("rolling_7", "unknown")
+    lag_1 = row.get("lag_1", "unknown")
+    lag_7 = row.get("lag_7", "unknown")
 
-    text2text_pipe = pipeline(
-        "text2text-generation",
-        model=model_name,
-        tokenizer=model_name,
-    )
-    return text2text_pipe
-
-
-# ---------------------------------------------------------
-# 1. Build documents from your Banff dataset
-# ---------------------------------------------------------
-def build_documents_from_banff(df: pd.DataFrame):
-    """
-    Turn the Banff features into readable text so the model can use them.
-    We create:
-      - doc1: a general description of the dataset
-      - doc2: a narrative built from a sample of rows
-    """
-    desc = (
-        "This dataset contains engineered features for daily visitor and traffic "
-        "patterns in Banff. Each row represents a time point with features such as "
-        "whether it was a weekend or holiday, the month, recent rolling averages, "
-        "and lagged visitor counts. The target is daily_visits.1, which represents "
-        "the number of visitors that day."
+    return (
+        f"Row {idx}: On {date} (month={month}, day_of_week={dow}, "
+        f"is_weekend={is_weekend}, is_holiday={is_holiday}), "
+        f"the visitors were {visitors}. "
+        f"Rolling 7-day average was {rolling_7}, "
+        f"lag_1 was {lag_1}, lag_7 was {lag_7}."
     )
 
-    narrative = "Here are some example days from the Banff traffic and visitor dataset:\n"
-    sample = df.head(50)  # limit to keep context small
 
-    for idx, row in sample.iterrows():
-        visitors = row.get("daily_visits.1", row.get("daily_visits", "unknown"))
-        month = row.get("month", "unknown")
-        is_weekend = row.get("is_weekend", "unknown")
-        is_holiday = row.get("is_holiday", "unknown")
-        rolling_7 = row.get("rolling_7", "unknown")
+def build_documents(df: pd.DataFrame, max_rows: int = 500) -> list[str]:
+    """
+    Build a list of text documents (one per row) from the dataframe.
+    We limit to `max_rows` to keep things light.
+    """
+    if df is None or df.empty:
+        return []
 
-        narrative += (
-            f"Example {idx}: Month {month}, weekend flag {is_weekend}, "
-            f"holiday flag {is_holiday}, rolling 7-day average {rolling_7}, "
-            f"and daily visitors (target) {visitors}.\n"
-        )
+    sample = df.head(max_rows)
+    documents = []
 
-    documents = {
-        "doc1": desc,
-        "doc2": narrative,
-    }
+    for i, (_, row) in enumerate(sample.iterrows()):
+        documents.append(_row_to_text(row, i))
+
     return documents
 
 
-# ---------------------------------------------------------
-# 2. Build embeddings + local LLM
-# ---------------------------------------------------------
-def build_rag_components(df: pd.DataFrame):
+# -------------------------------------------------------------------
+# 2. TF-IDF index + cosine similarity for retrieval
+# -------------------------------------------------------------------
+
+# Simple in-memory cache so we don't rebuild vectorizer on every call
+_DOCS_CACHE = None
+_VECTORIZER_CACHE = None
+_DOC_MATRIX_CACHE = None
+
+
+def _ensure_index(df: pd.DataFrame):
     """
-    Build documents from df, create their embeddings, and set up local LLM.
-    Returns (documents, doc_embeddings, embedder, llm_pipe).
+    Build TF-IDF index for the dataset if not already built.
+    Uses module-level globals as a tiny cache.
     """
-    documents = build_documents_from_banff(df)
+    global _DOCS_CACHE, _VECTORIZER_CACHE, _DOC_MATRIX_CACHE
 
-    embedder = SentenceTransformer("all-MiniLM-L6-v2")
+    if _DOCS_CACHE is not None and _VECTORIZER_CACHE is not None and _DOC_MATRIX_CACHE is not None:
+        return  # already built
 
-    doc_embeddings = {
-        doc_id: embedder.encode(text, convert_to_tensor=True)
-        for doc_id, text in documents.items()
-    }
+    docs = build_documents(df)
+    if not docs:
+        _DOCS_CACHE = []
+        _VECTORIZER_CACHE = None
+        _DOC_MATRIX_CACHE = None
+        return
 
-    llm_pipe = get_local_llm()
-    return documents, doc_embeddings, embedder, llm_pipe
+    vectorizer = TfidfVectorizer()
+    doc_matrix = vectorizer.fit_transform(docs)
+
+    _DOCS_CACHE = docs
+    _VECTORIZER_CACHE = vectorizer
+    _DOC_MATRIX_CACHE = doc_matrix
 
 
-# ---------------------------------------------------------
-# 3. Retrieval
-# ---------------------------------------------------------
-def retrieve_context_ids(query: str, embedder, doc_embeddings, top_k: int = 2):
+def retrieve_context(query: str, df: pd.DataFrame, top_k: int = 5) -> list[str]:
     """
-    Retrieve the most relevant document IDs for the given query.
+    Given a free-text query, return the top_k most similar document strings.
     """
-    query_embedding = embedder.encode(query, convert_to_tensor=True)
+    _ensure_index(df)
 
-    scores = {}
-    for doc_id, emb in doc_embeddings.items():
-        score = util.pytorch_cos_sim(query_embedding, emb).item()
-        scores[doc_id] = score
+    if not _DOCS_CACHE or _VECTORIZER_CACHE is None or _DOC_MATRIX_CACHE is None:
+        return []
 
-    sorted_docs = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    top_doc_ids = [doc_id for doc_id, score in sorted_docs[:top_k]]
-    return top_doc_ids
+    q_vec = _VECTORIZER_CACHE.transform([query])
+    sims = cosine_similarity(q_vec, _DOC_MATRIX_CACHE)[0]
+
+    # Highest similarity first
+    top_idx = np.argsort(sims)[::-1][:top_k]
+    results = []
+
+    for i in top_idx:
+        # Skip if similarity is zero (no overlap)
+        if sims[i] <= 0:
+            continue
+        results.append(_DOCS_CACHE[i])
+
+    return results
 
 
-def build_context_text(doc_ids, documents):
+# -------------------------------------------------------------------
+# 3. "Answer" builder (no external LLM, just summarises context)
+# -------------------------------------------------------------------
+
+
+def _build_answer_from_context(query: str, context_docs: list[str]) -> str:
     """
-    Helper: given doc IDs, join the actual text content.
+    Build a simple human-readable answer string from the retrieved documents.
+    This is NOT a true LLM, but it's enough to show RAG-style behaviour
+    without any external API.
     """
-    return "\n\n".join(documents[d] for d in doc_ids)
+    if not context_docs:
+        return (
+            "I could not find any rows in the dataset that match your question well. "
+            "Try asking in simpler words (for example: 'Which months are busy?' "
+            "or 'Do weekends have more visitors than weekdays?')."
+        )
 
+    bullets = "\n".join(f"- {doc}" for doc in context_docs)
 
-# ---------------------------------------------------------
-# 4. LLM call (local Flan-T5)
-# ---------------------------------------------------------
-def query_llm(query: str, context: str, llm_pipe):
-    """
-    Construct a prompt with context and query, and call the local T5 model.
-    """
-    prompt = (
-        "You are an assistant helping to analyze Banff visitor and traffic data. "
-        "Use ONLY the context below to answer the user's question clearly and simply.\n\n"
-        "Summarize patterns and relationships instead of just repeating raw numbers.\n\n"
-        f"Context:\n{context}\n\n"
-        f"User Question: {query}\n\n"
-        "Answer in 3–5 short sentences."
+    answer = (
+        f"You asked:\n\n"
+        f"**{query}**\n\n"
+        "Here are some relevant example days from the Banff dataset:\n\n"
+        f"{bullets}\n\n"
+        "From these examples, you can see how factors like month, weekend/holiday, "
+        "and recent visitor trends relate to the number of visitors on those days."
     )
 
-    # text2text-generation pipeline returns a list of dicts with 'generated_text'
-    result = llm_pipe(
-        prompt,
-        max_new_tokens=128,
-        do_sample=False,
-    )
-    text = result[0].get("generated_text", "").strip()
-    return text
+    return answer
 
 
-# ---------------------------------------------------------
-# 5. RAG chatbot helper
-# ---------------------------------------------------------
-def rag_answer(query: str, df: pd.DataFrame):
+# -------------------------------------------------------------------
+# 4. Public function used by app.py
+# -------------------------------------------------------------------
+
+
+def rag_answer(query: str, df: pd.DataFrame) -> str:
     """
-    Convenience function: build components, retrieve context, and answer.
-    For a small number of docs this is OK to recompute each question.
+    Main entry point called by app.py.
+
+    - Takes the user's question and the Banff dataframe
+    - Retrieves similar rows using TF-IDF
+    - Returns a simple text answer built from those rows
     """
-    documents, doc_embeddings, embedder, llm_pipe = build_rag_components(df)
-    top_doc_ids = retrieve_context_ids(query, embedder, doc_embeddings, top_k=2)
-    context = build_context_text(top_doc_ids, documents)
-    answer = query_llm(query, context, llm_pipe)
+    if not isinstance(query, str) or not query.strip():
+        return "Please type a non-empty question about the Banff visitor data."
+
+    context_docs = retrieve_context(query, df, top_k=5)
+    answer = _build_answer_from_context(query, context_docs)
     return answer
