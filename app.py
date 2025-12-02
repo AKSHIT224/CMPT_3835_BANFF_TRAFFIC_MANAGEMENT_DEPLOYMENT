@@ -24,6 +24,8 @@ st.set_page_config(
 )
 
 TARGET_COL = "daily_visits.1"  # change only if your target is different
+# Features that behave like leakage / shortcuts for the target
+LEAKAGE_COLS = ["daily_visits"]   # today's visits (very close to tomorrow's)
 
 
 # -----------------------------
@@ -125,7 +127,7 @@ def show_eda():
 
         st.write(
             """
-            This line chart shows how the **daily_visits.1** values change across the dataset.
+            This line chart shows how the **daily_visits.1** values change across the dataset.  
             Peaks indicate busier days with more visitors, while lower points show quieter days.
             """
         )
@@ -139,7 +141,7 @@ def show_eda():
         st.bar_chart(data=avg_by_dow, x="day_of_week", y=TARGET_COL)
         st.write(
             """
-            This bar chart shows the **average daily visitors for each day of the week**.
+            This bar chart shows the **average daily visitors for each day of the week**.  
             It helps identify which days are normally the busiest.
             """
         )
@@ -215,70 +217,97 @@ def show_model_and_prediction():
 # XAI PAGE
 # -----------------------------
 def show_xai():
-    st.title("Explainable AI (XAI)")
+    st.title("Explainable AI (XAI) – Banff Visitors Model")
 
     if y_all is None:
         st.warning("Target column not found, cannot compute XAI plots.")
         return
 
-    st.write(
-        """
-        These plots help explain **how** the model makes its predictions.
+    # For XAI, drop leakage / shortcut features like today's visits
+    X_xai = X_all.drop(columns=[c for c in LEAKAGE_COLS if c in X_all.columns])
 
-        - **Residual plot:** shows where the model over- or under-predicts.
-        - **Feature importance:** which features matter most overall.
-        - **SHAP summary:** how each feature pushes predictions up or down for many samples.
+    st.markdown(
+        """
+        The goal of this page is to **explain how the model makes decisions**.
+
+        - We use **global XAI** methods to understand behaviour across the whole dataset.
+        - We focus on:
+          - Residuals (errors)
+          - Global feature importance
+          - SHAP global summary
         """
     )
 
     # 1) Residual plot
-    st.subheader("1. Residual plot (actual - predicted)")
-    fig_res = plot_residuals(model, X_all, y_all)
-    st.pyplot(fig_res)
+    st.subheader("1. Residual Plot (Global Error Behaviour)")
+    fig_resid = plot_residuals(model, X_xai, y_all)
+    st.pyplot(fig_resid)
 
-    st.write(
+    st.markdown(
         """
-        Points close to zero mean the prediction is very accurate.  
-        Large positive or negative residuals show days where the model struggled more.
-        """
-    )
-
-    # 2) Feature importance
-    st.subheader("2. Global feature importance")
-    fig_imp = plot_feature_importance(model, X_all, y_all)
-    if fig_imp is not None:
-        st.pyplot(fig_imp)
-    else:
-        st.info(
-            "Feature importance could not be computed for this model. "
-            "This can happen if the model does not expose feature_importances_."
-        )
-
-    st.write(
-        """
-        Features at the top of this chart have the strongest overall impact on the prediction.  
-        This helps you see which variables are most important for estimating daily visitors.
+        - Each point is one record (day / client) from the dataset.  
+        - The y-axis shows the **residual** = actual daily visitors − predicted daily visitors.  
+        - Points scattered around the red zero line mean the model is not always over- or under-predicting.  
+        - Most residuals are small on the scaled target, which matches the low error (MAE/RMSE) we saw earlier.
         """
     )
 
-    # 3) SHAP summary
-    st.subheader("3. SHAP summary plot (sample of rows)")
-    st.write("This plot shows how each feature affects the prediction across many samples.")
+    st.markdown("---")
+
+    # 2) Permutation feature importance (global)
+    st.subheader("2. Global Feature Importance (Permutation Importance)")
+    fig_perm = plot_feature_importance(model, X_xai, y_all, top_n=15)
+    st.pyplot(fig_perm)
+
+    st.markdown(
+        """
+        - This is a **global XAI method**: it explains which features the model
+          relies on most *on average* across all records.  
+        - For each feature, we randomly shuffle its values and measure how much the
+          model’s performance gets worse.  
+        - Features with longer bars cause a larger drop in performance when shuffled,
+          so they are **more important** to the model.  
+        - In our Banff project, this lets us:
+          - Check that the model uses sensible signals (weekend, month, lag features, etc.).  
+          - Detect shortcuts or leakage (for example, if `daily_visits` dominates importance, the model might just copy today’s value to predict tomorrow).
+        """
+    )
+
+    st.markdown("---")
+
+    # 3) SHAP summary (global)
+    st.subheader("3. Global SHAP Summary (Top Features)")
+
+    st.markdown(
+        """
+        - SHAP is another **global XAI technique** based on Shapley values from game theory.  
+        - It shows how much each feature typically pushes predictions **up or down**.  
+        - We compute SHAP values on a sample of the dataset for speed.
+        """
+    )
 
     try:
-        fig_shap = plot_shap_summary(model, X_all)
+        with st.spinner("Computing SHAP explanations on a sample of the data..."):
+            fig_shap = plot_shap_summary(model, X_xai)
+        st.pyplot(fig_shap)
+
+        st.markdown(
+            """
+            - The bar plot shows the average absolute SHAP value for each feature.  
+            - Features with larger bars have a stronger overall impact on the predicted daily visitors.  
+            - For the Banff model, this helps us confirm that important drivers such as:
+              - **Weekend vs weekday**
+              - **Month / season**
+              - **Recent visit history (lag features)**
+              are influencing the predictions in a sensible way.
+            """
+        )
     except Exception as e:
         st.warning(
-            "SHAP summary could not be computed for this saved model "
-            "(it is stored as a scikit-learn Pipeline, which some SHAP explainers "
-            "do not fully support). We will rely on the residual and feature-"
-            "importance plots as the main XAI views."
+            "SHAP summary could not be computed for this saved model. "
+            "We will rely on the residual plot and permutation feature "
+            "importance as our main global XAI tools."
         )
-    else:
-        if fig_shap is not None:
-            st.pyplot(fig_shap)
-        else:
-            st.info("SHAP plot is not available for this model.")
 
 
 # -----------------------------
@@ -323,8 +352,7 @@ def show_rag_chatbot():
 
             # Save to history
             st.session_state.rag_history.append({"q": q, "a": answer})
-            # We do not reset st.session_state.rag_question here
-            # (Streamlit 1.51 doesn't like changing widget state after creation).
+            # (We do not reset st.session_state.rag_question here.)
 
     st.subheader("Conversation")
 
