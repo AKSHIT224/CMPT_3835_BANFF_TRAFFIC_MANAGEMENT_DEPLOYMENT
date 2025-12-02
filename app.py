@@ -24,7 +24,7 @@ st.set_page_config(
 )
 
 TARGET_COL = "daily_visits.1"  # change only if your target is different
-# Features that behave like leakage / shortcuts for the target
+# Potential shortcut / leakage feature
 LEAKAGE_COLS = ["daily_visits"]   # today's visits (very close to tomorrow's)
 
 
@@ -223,9 +223,6 @@ def show_xai():
         st.warning("Target column not found, cannot compute XAI plots.")
         return
 
-    # For XAI, drop leakage / shortcut features like today's visits
-    X_xai = X_all.drop(columns=[c for c in LEAKAGE_COLS if c in X_all.columns])
-
     st.markdown(
         """
         The goal of this page is to **explain how the model makes decisions**.
@@ -240,7 +237,7 @@ def show_xai():
 
     # 1) Residual plot
     st.subheader("1. Residual Plot (Global Error Behaviour)")
-    fig_resid = plot_residuals(model, X_xai, y_all)
+    fig_resid = plot_residuals(model, X_all, y_all)
     st.pyplot(fig_resid)
 
     st.markdown(
@@ -256,7 +253,7 @@ def show_xai():
 
     # 2) Permutation feature importance (global)
     st.subheader("2. Global Feature Importance (Permutation Importance)")
-    fig_perm = plot_feature_importance(model, X_xai, y_all, top_n=15)
+    fig_perm = plot_feature_importance(model, X_all, y_all, top_n=15)
     st.pyplot(fig_perm)
 
     st.markdown(
@@ -267,9 +264,13 @@ def show_xai():
           model’s performance gets worse.  
         - Features with longer bars cause a larger drop in performance when shuffled,
           so they are **more important** to the model.  
-        - In our Banff project, this lets us:
-          - Check that the model uses sensible signals (weekend, month, lag features, etc.).  
-          - Detect shortcuts or leakage (for example, if `daily_visits` dominates importance, the model might just copy today’s value to predict tomorrow).
+        - In our Banff project we see that `daily_visits` (today's visits) is extremely
+          important. This is a useful XAI insight:
+          - It means the model is using a strong shortcut: “tomorrow’s visits ≈ today’s visits”.  
+          - This can behave like **feature leakage** because the model may not fully learn
+            from seasonality, weekends, or client history.  
+          - In a future iteration we could retrain the model without this feature to
+            get a more robust and interpretable model.
         """
     )
 
@@ -288,7 +289,7 @@ def show_xai():
 
     try:
         with st.spinner("Computing SHAP explanations on a sample of the data..."):
-            fig_shap = plot_shap_summary(model, X_xai)
+            fig_shap = plot_shap_summary(model, X_all)
         st.pyplot(fig_shap)
 
         st.markdown(
@@ -299,7 +300,8 @@ def show_xai():
               - **Weekend vs weekday**
               - **Month / season**
               - **Recent visit history (lag features)**
-              are influencing the predictions in a sensible way.
+              and the strong shortcut feature `daily_visits`
+              are influencing the predictions in a sensible way (although the shortcut may need to be reduced).
             """
         )
     except Exception as e:
