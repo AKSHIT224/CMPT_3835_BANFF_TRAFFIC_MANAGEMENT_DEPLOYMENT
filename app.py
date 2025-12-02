@@ -23,8 +23,8 @@ st.set_page_config(
     layout="wide"
 )
 
-TARGET_COL = "daily_visits.1"  # change only if your target is different
-# Potential shortcut / leakage feature
+TARGET_COL = "daily_visits.1"  # target = tomorrow's visits (scaled)
+# Potential shortcut / leakage feature (we removed this during training)
 LEAKAGE_COLS = ["daily_visits"]   # today's visits (very close to tomorrow's)
 
 
@@ -60,7 +60,10 @@ if df is None or model is None:
 # Split X and y for evaluation
 if TARGET_COL in df.columns:
     y_all = df[TARGET_COL].copy()
-    X_all = df.drop(columns=[TARGET_COL]).copy()
+    # IMPORTANT: drop target + leakage feature to match the retrained model
+    X_all = df.drop(
+        columns=[TARGET_COL] + [c for c in LEAKAGE_COLS if c in df.columns]
+    ).copy()
 else:
     y_all = None
     X_all = df.copy()
@@ -93,7 +96,8 @@ def show_home():
         - Provide a RAG-based chatbot interface for natural language questions
 
         Data source: `final_selected_features.csv`  
-        Best model: tuned XGBoost (saved as `best_model.pkl`)
+        Best model: XGBoost pipeline (saved as `best_model.pkl`), trained **without**
+        the shortcut feature `daily_visits` to avoid leakage.
         """
     )
 
@@ -122,7 +126,7 @@ def show_eda():
         ax.plot(df[TARGET_COL].values)
         ax.set_title("Daily Visitors Over Time")
         ax.set_xlabel("Row index (time order)")
-        ax.set_ylabel("Number of visitors")
+        ax.set_ylabel("Number of visitors (scaled)")
         st.pyplot(fig)
 
         st.write(
@@ -170,7 +174,7 @@ def show_model_and_prediction():
         st.write(
             """
             These metrics show how far, on average, the model's predictions are
-            from the actual visitor counts.
+            from the actual visitor counts (on the scaled target).
             """
         )
     else:
@@ -206,10 +210,10 @@ def show_model_and_prediction():
 
     if y_all is not None:
         y_true_row = y_all.iloc[row_index]
-        st.write(f"**Predicted visitors:** {y_pred_row:.3f}")
-        st.write(f"**Actual visitors:** {y_true_row:.3f}")
+        st.write(f"**Predicted visitors (scaled):** {y_pred_row:.3f}")
+        st.write(f"**Actual visitors (scaled):** {y_true_row:.3f}")
     else:
-        st.write(f"**Predicted visitors:** {y_pred_row:.3f}")
+        st.write(f"**Predicted visitors (scaled):** {y_pred_row:.3f}")
         st.write("Actual visitors not available (no target column).")
 
 
@@ -232,6 +236,11 @@ def show_xai():
           - Residuals (errors)
           - Global feature importance
           - SHAP global summary
+
+        Note: An earlier version of the model used `daily_visits` (today's visitors) as
+        a feature. XAI showed that it acted as a shortcut (“tomorrow ≈ today”), so we
+        **removed that feature and retrained the model**. The plots below use the new
+        model without this leakage.
         """
     )
 
@@ -245,7 +254,7 @@ def show_xai():
         - Each point is one record (day / client) from the dataset.  
         - The y-axis shows the **residual** = actual daily visitors − predicted daily visitors.  
         - Points scattered around the red zero line mean the model is not always over- or under-predicting.  
-        - Most residuals are small on the scaled target, which matches the low error (MAE/RMSE) we saw earlier.
+        - Most residuals are reasonably small on the scaled target, which matches the MAE/RMSE we saw earlier.
         """
     )
 
@@ -264,13 +273,13 @@ def show_xai():
           model’s performance gets worse.  
         - Features with longer bars cause a larger drop in performance when shuffled,
           so they are **more important** to the model.  
-        - In our Banff project we see that `daily_visits` (today's visits) is extremely
-          important. This is a useful XAI insight:
-          - It means the model is using a strong shortcut: “tomorrow’s visits ≈ today’s visits”.  
-          - This can behave like **feature leakage** because the model may not fully learn
-            from seasonality, weekends, or client history.  
-          - In a future iteration we could retrain the model without this feature to
-            get a more robust and interpretable model.
+        - After removing `daily_visits`, the importance plot is more balanced:
+          - Time-related features like **month**, **hour**, and **is_weekend**
+            help capture seasonality and weekend effects.
+          - Lag and rolling features (e.g., **lag_7**, **lag_14**, **lag_30**, **rolling_7**)
+            capture recent visitor history.
+          - Client history features (e.g., **client_lifetime_visits**, **days_since_first_visit**)
+            also contribute to predictions.
         """
     )
 
@@ -296,12 +305,12 @@ def show_xai():
             """
             - The bar plot shows the average absolute SHAP value for each feature.  
             - Features with larger bars have a stronger overall impact on the predicted daily visitors.  
-            - For the Banff model, this helps us confirm that important drivers such as:
-              - **Weekend vs weekday**
-              - **Month / season**
-              - **Recent visit history (lag features)**
-              and the strong shortcut feature `daily_visits`
-              are influencing the predictions in a sensible way (although the shortcut may need to be reduced).
+            - For the updated Banff model (without `daily_visits`), SHAP highlights:
+              - **Weekend vs weekday** and **month/season** as important drivers.
+              - **Lag** and **rolling** features as key signals of recent visitor patterns.
+              - **Client history** variables for capturing how engaged a visitor is.
+            - This confirms that the new model is using meaningful patterns instead of
+              relying on a single shortcut feature.
             """
         )
     except Exception as e:
