@@ -90,8 +90,8 @@ def show_home():
         - Show XAI graphs to explain the model
         - Provide a RAG-based chatbot interface for natural language questions
 
-        Data source: final_selected_features.csv  
-        Best model: tuned XGBoost (saved as best_model.pkl)
+        Data source: `final_selected_features.csv`  
+        Best model: tuned XGBoost (saved as `best_model.pkl`)
         """
     )
 
@@ -167,7 +167,8 @@ def show_model_and_prediction():
 
         st.write(
             """
-            These metrics show how far, on average, the model's predictions are from the actual visitor counts.
+            These metrics show how far, on average, the model's predictions are
+            from the actual visitor counts.
             """
         )
     else:
@@ -191,7 +192,7 @@ def show_model_and_prediction():
         min_value=0,
         max_value=len(X_all) - 1,
         value=0,
-        step=1
+        step=1,
     )
 
     X_row = X_all.iloc[[row_index]]  # keep as DataFrame
@@ -245,7 +246,13 @@ def show_xai():
     # 2) Feature importance
     st.subheader("2. Global feature importance")
     fig_imp = plot_feature_importance(model, X_all, y_all)
-    st.pyplot(fig_imp)
+    if fig_imp is not None:
+        st.pyplot(fig_imp)
+    else:
+        st.info(
+            "Feature importance could not be computed for this model. "
+            "This can happen if the model does not expose feature_importances_."
+        )
 
     st.write(
         """
@@ -258,8 +265,20 @@ def show_xai():
     st.subheader("3. SHAP summary plot (sample of rows)")
     st.write("This plot shows how each feature affects the prediction across many samples.")
 
-    fig_shap = plot_shap_summary(model, X_all)
-    st.pyplot(fig_shap)
+    try:
+        fig_shap = plot_shap_summary(model, X_all)
+    except Exception as e:
+        st.warning(
+            "SHAP summary could not be computed for this saved model "
+            "(it is stored as a scikit-learn Pipeline, which some SHAP explainers "
+            "do not fully support). We will rely on the residual and feature-"
+            "importance plots as the main XAI views."
+        )
+    else:
+        if fig_shap is not None:
+            st.pyplot(fig_shap)
+        else:
+            st.info("SHAP plot is not available for this model.")
 
 
 # -----------------------------
@@ -290,9 +309,9 @@ def show_rag_chatbot():
         st.session_state.rag_history = []
 
     # Text input linked to session_state key
-    user_question = st.text_input(
+    st.text_input(
         "Ask a question about the Banff visitor data:",
-        placeholder="e.g., Which months are busy? Do weekends have more visitors?",
+        placeholder="e.g., Do weekends have more visitors than weekdays?",
         key="rag_question",
     )
 
