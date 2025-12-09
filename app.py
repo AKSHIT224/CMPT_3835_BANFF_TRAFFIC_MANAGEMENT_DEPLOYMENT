@@ -3,14 +3,14 @@ import pandas as pd
 import numpy as np
 import joblib
 import os
+import math
+import matplotlib.pyplot as plt
 from sklearn.metrics import (
     mean_absolute_error,
     mean_squared_error,
     r2_score,
     mean_absolute_percentage_error,
 )
-import math
-import matplotlib.pyplot as plt
 
 from xai_utils import (
     plot_residuals,
@@ -29,7 +29,6 @@ st.set_page_config(
 )
 
 TARGET_COL = "daily_visits.1"  # target = tomorrow's visits (scaled)
-# Potential shortcut / leakage feature (we removed this during training)
 LEAKAGE_COLS = ["daily_visits"]   # today's visits (very close to tomorrow's)
 
 
@@ -80,7 +79,7 @@ else:
 st.sidebar.title("Navigation")
 page = st.sidebar.radio(
     "Go to:",
-    ["Home", "EDA", "Model & Prediction", "XAI", "RAG Chatbot"]
+    ["Home", "EDA & Feature Engineering", "Model & Prediction", "XAI", "RAG Chatbot"]
 )
 
 
@@ -94,7 +93,7 @@ def show_home():
         This app is part of **CMPT-3835 – Banff Traffic Management**.
 
         It uses your cleaned and engineered dataset to:
-        - Explore visitor and traffic patterns (EDA)
+        - Explore visitor and traffic patterns (EDA & feature engineering)
         - Show how the ML model is performing
         - Provide a simple prediction demo for daily visitors
         - Show XAI graphs to explain the model
@@ -115,47 +114,36 @@ def show_home():
 
 
 # -----------------------------
-# EDA PAGE
+# EDA & FEATURE ENGINEERING PAGE
 # -----------------------------
 def show_eda():
-    st.title("Exploratory Data Analysis (EDA)")
+    st.title("EDA & Feature Engineering")
 
-    st.write("Below are some simple views of the final engineered dataset.")
+    st.write(
+        """
+        This page shows key charts from our EDA and feature engineering work.
+        The plots below are pre-generated and loaded as images.
+        """
+    )
 
-    st.subheader("1. Preview of the data")
-    st.dataframe(df.head())
+    st.subheader("1. Parking Site Usage Distribution")
+    st.caption("Most parking activity is concentrated on Banff Ave, with smaller volumes at other sites.")
+    st.image("assets/site_count.png", use_container_width=True)
 
-    st.subheader("2. Distribution of the target (daily visitors)")
-    if TARGET_COL in df.columns:
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(df[TARGET_COL].values)
-        ax.set_title("Daily Visitors Over Time")
-        ax.set_xlabel("Row index (time order)")
-        ax.set_ylabel("Number of visitors (scaled)")
-        st.pyplot(fig)
+    st.subheader("2. Payment Method Share")
+    st.caption("Majority of users pay by bank card, followed by pay-by-phone, with very little cash usage.")
+    st.image("assets/payment_method_share.png", use_container_width=True)
 
-        st.write(
-            """
-            This line chart shows how the **daily_visits.1** values change across the dataset.  
-            Peaks indicate busier days with more visitors, while lower points show quieter days.
-            """
-        )
-    else:
-        st.warning(f"Target column '{TARGET_COL}' not found in the dataset.")
+    st.subheader("3. Parking Usage by Hour of the Day")
+    st.caption("Parking demand grows from morning, peaks around mid-day / afternoon, and then drops in the evening.")
+    st.image("assets/parking_usage_by_hour.png", use_container_width=True)
 
-    # If day_of_week exists, show average visitors per day of week
-    if TARGET_COL in df.columns and "day_of_week" in df.columns:
-        st.subheader("3. Average visitors by day of week")
-        avg_by_dow = df.groupby("day_of_week")[TARGET_COL].mean().reset_index()
-        st.bar_chart(data=avg_by_dow, x="day_of_week", y=TARGET_COL)
-        st.write(
-            """
-            This bar chart shows the **average daily visitors for each day of the week**.  
-            It helps identify which days are normally the busiest.
-            """
-        )
-    else:
-        st.info("Column 'day_of_week' not found, so day-of-week plot is skipped.")
+    st.subheader("4. Feature Correlation with Daily Visits")
+    st.caption(
+        "Correlation of engineered features with daily visitor counts. "
+        "Lag features and weekend/holiday indicators show stronger relationships."
+    )
+    st.image("assets/feature_correlation_heatmap.png", use_container_width=True)
 
 
 # -----------------------------
@@ -421,11 +409,6 @@ def show_xai():
           - Residuals (errors)
           - Global feature importance
           - SHAP global summary
-
-        Note: An earlier version of the model used `daily_visits` (today's visitors) as
-        a feature. XAI showed that it acted as a shortcut (“tomorrow ≈ today”), so we
-        **removed that feature and retrained the model**. The plots below use the new
-        model without this leakage.
         """
     )
 
@@ -434,15 +417,6 @@ def show_xai():
     fig_resid = plot_residuals(model, X_all, y_all)
     st.pyplot(fig_resid)
 
-    st.markdown(
-        """
-        - Each point is one record (day / client) from the dataset.  
-        - The y-axis shows the **residual** = actual daily visitors − predicted daily visitors.  
-        - Points scattered around the red zero line mean the model is not always over- or under-predicting.  
-        - Most residuals are reasonably small on the scaled target, which matches the MAE/RMSE we saw earlier.
-        """
-    )
-
     st.markdown("---")
 
     # 2) Permutation feature importance (global)
@@ -450,55 +424,15 @@ def show_xai():
     fig_perm = plot_feature_importance(model, X_all, y_all, top_n=15)
     st.pyplot(fig_perm)
 
-    st.markdown(
-        """
-        - This is a **global XAI method**: it explains which features the model
-          relies on most *on average* across all records.  
-        - For each feature, we randomly shuffle its values and measure how much the
-          model’s performance gets worse.  
-        - Features with longer bars cause a larger drop in performance when shuffled,
-          so they are **more important** to the model.  
-        - After removing `daily_visits`, the importance plot is more balanced:
-          - Time-related features like **month**, **hour**, and **is_weekend**
-            help capture seasonality and weekend effects.
-          - Lag and rolling features (e.g., **lag_7**, **lag_14**, **lag_30**, **rolling_7**)
-            capture recent visitor history.
-          - Client history features (e.g., **client_lifetime_visits**, **days_since_first_visit**)
-            also contribute to predictions.
-        """
-    )
-
     st.markdown("---")
 
     # 3) SHAP summary (global)
     st.subheader("3. Global SHAP Summary (Top Features)")
-
-    st.markdown(
-        """
-        - SHAP is another **global XAI technique** based on Shapley values from game theory.  
-        - It shows how much each feature typically pushes predictions **up or down**.  
-        - We compute SHAP values on a sample of the dataset for speed.
-        """
-    )
-
     try:
         with st.spinner("Computing SHAP explanations on a sample of the data..."):
             fig_shap = plot_shap_summary(model, X_all)
         st.pyplot(fig_shap)
-
-        st.markdown(
-            """
-            - The bar plot shows the average absolute SHAP value for each feature.  
-            - Features with larger bars have a stronger overall impact on the predicted daily visitors.  
-            - For the updated Banff model (without `daily_visits`), SHAP highlights:
-              - **Weekend vs weekday** and **month/season** as important drivers.
-              - **Lag** and **rolling** features as key signals of recent visitor patterns.
-              - **Client history** variables for capturing how engaged a visitor is.
-            - This confirms that the new model is using meaningful patterns instead of
-              relying on a single shortcut feature.
-            """
-        )
-    except Exception as e:
+    except Exception:
         st.warning(
             "SHAP summary could not be computed for this saved model. "
             "We will rely on the residual plot and permutation feature "
@@ -516,18 +450,12 @@ def show_rag_chatbot():
         """
         This chatbot uses a simple Retrieval-Augmented Generation (RAG)-style pipeline.
 
-        It:
-        - Converts the Banff dataset into short text descriptions.
-        - Uses TF-IDF to retrieve the most relevant example days for your question.
-        - Builds a small numeric summary (months / weekends / holidays) when your question
-          is about those topics.
-        - Combines the summary into a natural-language answer.
-
-        Everything runs locally in this app – no external AI API is called.
+        You can either pick one of the sample questions or type your own.
+        The app will return a short, data-based answer using the Banff dataset.
         """
     )
 
-    # Fixed questions (from your screenshots)
+    # Fixed questions (from your instructions)
     fixed_questions = [
         "How are visitor counts related to lag_7 and lag_30 values in this dataset?",
         "How do the 7-day rolling averages compare to actual visitor counts in April?",
@@ -580,7 +508,7 @@ def show_rag_chatbot():
 # -----------------------------
 if page == "Home":
     show_home()
-elif page == "EDA":
+elif page == "EDA & Feature Engineering":
     show_eda()
 elif page == "Model & Prediction":
     show_model_and_prediction()
