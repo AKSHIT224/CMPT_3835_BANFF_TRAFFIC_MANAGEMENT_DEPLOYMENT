@@ -103,13 +103,14 @@ def plot_feature_importance(model, X, y, top_n=8):
 
 
 # ----------------------------------------------------
-# 3. SHAP Summary Plot (with feature names)
+# 3. SHAP Summary Plot (beeswarm, with feature names)
 # ----------------------------------------------------
 def plot_shap_summary(model, X, max_display=8):
     """
-    SHAP summary plot for models inside a Pipeline.
+    SHAP beeswarm summary plot for models inside a Pipeline.
 
-    Uses shap.Explainer on the final estimator and the preprocessed X.
+    Shows how each of the top features pushes predictions up or down
+    across many samples (global + directional explanation).
     Returns a matplotlib Figure or None if SHAP cannot be computed.
     """
 
@@ -149,15 +150,16 @@ def plot_shap_summary(model, X, max_display=8):
     except Exception:
         return None
 
+    # Beeswarm (dot) plot instead of bar plot
     fig = plt.figure(figsize=(10, 5))
     shap.summary_plot(
         shap_values,
         X_sample,
         feature_names=feature_names,
-        show=False,
-        plot_type="bar",
+        show=False,          # so Streamlit can render it
         max_display=max_display,
+        plot_type="dot",     # beeswarm-style plot
     )
-    plt.title("Top Global Features (SHAP Summary)")
+    plt.title("Global Feature Effects (SHAP Beeswarm)")
     plt.tight_layout()
     return fig
