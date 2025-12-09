@@ -528,22 +528,40 @@ def show_rag_chatbot():
     )
 
     # Fixed questions (from your screenshots)
-    QUESTIONS = [
+    fixed_questions = [
         "How are visitor counts related to lag_7 and lag_30 values in this dataset?",
         "How do the 7-day rolling averages compare to actual visitor counts in April?",
         "Which days in April stand out as much busier than their recent 7-day trend?",
         "Do weekends show higher visitor numbers than weekdays in April ?",
     ]
 
-    selected_q = st.radio(
-        "Select a question you want to ask:",
-        QUESTIONS,
+    options = fixed_questions + ["Type my own question"]
+
+    selected_option = st.radio(
+        "Select a question or choose 'Type my own question':",
+        options,
         index=0,
     )
 
+    custom_q = st.text_input(
+        "Or type your own question:",
+        "",
+        placeholder="Example: How do visitors change on holidays compared to normal days?",
+    )
+
     if st.button("Get answer"):
+        # Decide which question to send
+        if selected_option != "Type my own question":
+            q = selected_option
+        else:
+            q = custom_q.strip()
+
+        if not q:
+            st.warning("Please select a question or type your own question.")
+            return
+
         with st.spinner("Thinking..."):
-            raw_answer = rag_answer(selected_q, df)
+            raw_answer = rag_answer(q, df)
 
         # Remove the "Example days from the dataset" section
         marker = "Example days from the dataset"
