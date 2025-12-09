@@ -122,39 +122,43 @@ def show_eda():
     st.write(
         """
         This page shows the main EDA and feature engineering graphs we used
-        to understand Banff parking and visitor behaviour.
+        to understand Banff parking demand and visitor behaviour.
         """
     )
 
     # 1) Site / parking location counts
     st.subheader("1. Parking Site Usage Distribution")
     st.caption(
-        "This bar chart shows how many parking records come from each site. "
-        "It helps us see which areas of Banff are used the most."
+        "This bar chart shows how many parking records come from each site in Banff. "
+        "Taller bars mean that location is used more often and has higher parking demand. "
+        "It helps us see which streets or areas are the main pressure points for parking."
     )
     st.image("Picture1.png", use_container_width=True)
 
     # 2) Payment method share
     st.subheader("2. Payment Method Share")
     st.caption(
-        "This chart shows the share of each payment type (card, phone, cash). "
-        "It tells us how visitors prefer to pay for parking."
+        "This chart shows the percentage of each payment method (card, phone, cash) used at the meters. "
+        "We can see that electronic payments dominate, while cash is used very rarely. "
+        "This is useful for planning payment systems and deciding where physical machines are still needed."
     )
     st.image("Picture2.png", use_container_width=True)
 
     # 3) Parking usage by hour of day
     st.subheader("3. Parking Usage by Hour of the Day")
     st.caption(
-        "This line graph shows how parking usage changes by hour. "
-        "It highlights the busy hours of the day compared to quieter times."
+        "This line graph shows how parking usage changes across the hours of the day. "
+        "Counts are low in early morning, rise during the day, and peak around mid-day or afternoon. "
+        "It helps identify the main peak hours when congestion and parking pressure are highest."
     )
     st.image("Picture3.png", use_container_width=True)
 
     # 4) Feature correlation heatmap
     st.subheader("4. Feature Correlation with Daily Visits")
     st.caption(
-        "This heatmap shows how strongly each engineered feature is related to daily visitors. "
-        "Higher correlation means that feature is more useful for predicting demand."
+        "This heatmap shows how strongly each engineered feature is correlated with daily visitor counts. "
+        "Warmer colours (higher values) mean a stronger positive relationship with visits. "
+        "It helps us choose which features are most useful for the model, such as lags and weekend/holiday flags."
     )
     st.image("Picture4.png", use_container_width=True)
 
