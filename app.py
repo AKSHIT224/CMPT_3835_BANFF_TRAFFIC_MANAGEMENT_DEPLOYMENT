@@ -527,68 +527,34 @@ def show_rag_chatbot():
         """
     )
 
-    # --- Initialize session state BEFORE widgets ---
-    if "rag_question" not in st.session_state:
-        st.session_state.rag_question = ""
-    if "rag_history" not in st.session_state:
-        st.session_state.rag_history = []
+    # Fixed questions (from your screenshots)
+    QUESTIONS = [
+        "How are visitor counts related to lag_7 and lag_30 values in this dataset?",
+        "How do the 7-day rolling averages compare to actual visitor counts in April?",
+        "Which days in April stand out as much busier than their recent 7-day trend?",
+        "Do weekends show higher visitor numbers than weekdays in April ?",
+    ]
 
-    # -----------------------------
-    # Sample questions (click to auto-fill)
-    # -----------------------------
-    st.markdown("**Sample questions you can try:**")
-
-    q1, q2, q3, q4 = st.columns(4)
-
-    if q1.button("Do weekends have more visitors?"):
-        st.session_state.rag_question = "Do weekends have more visitors than weekdays?"
-
-    if q2.button("How does month affect visitors?"):
-        st.session_state.rag_question = "How do visitor counts change across different months?"
-
-    if q3.button("Impact of rolling 7-day average"):
-        st.session_state.rag_question = "How do the 7 day rolling averages compare to actual visitor count?"
-
-    if q4.button("Lag features explanation"):
-        st.session_state.rag_question = "How do lag 7, lag 14, and lag 30 features relate to daily visitors?"
-
-    # -----------------------------
-    # Text input
-    # -----------------------------
-    st.text_input(
-        "Ask a question about the Banff visitor data:",
-        placeholder="Type your own question or click a sample above",
-        key="rag_question",
+    selected_q = st.radio(
+        "Select a question you want to ask:",
+        QUESTIONS,
+        index=0,
     )
 
     if st.button("Get answer"):
-        q = (st.session_state.rag_question or "").strip()
-        if q:
-            with st.spinner("Thinking..."):
-                raw_answer = rag_answer(q, df)
+        with st.spinner("Thinking..."):
+            raw_answer = rag_answer(selected_q, df)
 
-            # ---- keep only the main answer, drop example-days section ----
-            marker = "Example days from the dataset"
-            idx = raw_answer.find(marker)
-            if idx != -1:
-                answer = raw_answer[:idx].strip()
-            else:
-                answer = raw_answer.strip()
+        # Remove the "Example days from the dataset" section
+        marker = "Example days from the dataset"
+        idx = raw_answer.find(marker)
+        if idx != -1:
+            answer = raw_answer[:idx].strip()
+        else:
+            answer = raw_answer.strip()
 
-            st.session_state.rag_history.append({"q": q, "a": answer})
-
-    # -----------------------------
-    # Conversation history
-    # -----------------------------
-    st.subheader("Conversation")
-
-    if not st.session_state.rag_history:
-        st.info("Ask a question above or click a sample question to start.")
-    else:
-        for item in st.session_state.rag_history:
-            st.markdown(f"**Q:** {item['q']}")
-            st.markdown(f"**A:** {item['a']}")
-            st.markdown("---")
+        st.subheader("Answer")
+        st.markdown(answer)
 
 
 # -----------------------------
