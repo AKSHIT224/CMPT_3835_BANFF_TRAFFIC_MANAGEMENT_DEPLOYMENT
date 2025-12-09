@@ -51,16 +51,15 @@ def plot_residuals(model, X, y):
 
 
 # ----------------------------------------------------
-# 2. Permutation Feature Importance (top 8 only)
+# 2. Permutation Feature Importance (top_n features)
 # ----------------------------------------------------
-def plot_feature_importance(model, X, y):
+def plot_feature_importance(model, X, y, top_n=8):
     """
     Global feature importance using permutation importance
     on a subset of the data (faster).
 
-    Shows the top 8 most important features.
+    Shows the top_n most important features (default = 8).
     """
-    top_n = 8  # <-- fixed to 8
 
     # sample for faster XAI computation
     if len(X) > 2000:
@@ -84,7 +83,7 @@ def plot_feature_importance(model, X, y):
 
     importances = result.importances_mean
 
-    # sort by importance (descending) and keep top 8
+    # sort by importance (descending) and keep top_n
     idx_sorted = np.argsort(importances)[::-1]
     idx_final = idx_sorted[:top_n]
 
@@ -92,7 +91,7 @@ def plot_feature_importance(model, X, y):
     feature_names = np.array(sample.columns)[idx_final]
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    order = np.argsort(sorted_importances)  # for bottom-to-top bars
+    order = np.argsort(sorted_importances)  # bottom-to-top bars
     ax.barh(range(len(sorted_importances)), sorted_importances[order])
     ax.set_yticks(range(len(sorted_importances)))
     ax.set_yticklabels(feature_names[order])
@@ -123,10 +122,14 @@ def plot_shap_summary(model, X, max_display=8):
         if hasattr(preprocessor, "get_feature_names_out"):
             feature_names = list(preprocessor.get_feature_names_out())
         else:
-            feature_names = list(getattr(X, "columns", [f"Feature {i+1}" for i in range(X_proc.shape[1])]))
+            feature_names = list(
+                getattr(X, "columns", [f"Feature {i+1}" for i in range(X_proc.shape[1])])
+            )
     else:
         X_proc = X
-        feature_names = list(getattr(X, "columns", [f"Feature {i+1}" for i in range(X.shape[1])]))
+        feature_names = list(
+            getattr(X, "columns", [f"Feature {i+1}" for i in range(X.shape[1])])
+        )
 
     # convert to dense numpy array if needed
     if sparse.issparse(X_proc):
