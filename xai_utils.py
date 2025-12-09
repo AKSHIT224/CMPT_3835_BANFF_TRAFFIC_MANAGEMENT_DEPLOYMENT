@@ -21,8 +21,7 @@ def _split_pipeline(model):
     if hasattr(model, "named_steps"):
         steps = list(model.named_steps.items())
         final_est = steps[-1][1]  # last step = estimator
-        # assume the last step before estimator that has "transform"
-        # is our preprocessor (e.g., ColumnTransformer)
+        # assume the last transform step before estimator is the preprocessor
         for name, step in steps[:-1]:
             if hasattr(step, "transform"):
                 preprocessor = step
@@ -33,18 +32,25 @@ def _split_pipeline(model):
 # ----------------------------------------------------
 # 1. Residual Plot
 # ----------------------------------------------------
-def plot_residuals(model, X, y):
+def plot_residuals(model, X, y, clip_quantile=0.99):
     """
     Global error behaviour: residual = actual - predicted.
     Residuals are plotted against predicted values.
+    To avoid distortion by extreme outliers, we show only
+    the central `clip_quantile` fraction of residuals.
     """
     y_pred = model.predict(X)
     residuals = y - y_pred
 
+    # clip extreme residuals for nicer visualisation
+    abs_resid = np.abs(residuals)
+    limit = np.quantile(abs_resid, clip_quantile)
+    mask = abs_resid <= limit
+
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.scatter(y_pred, residuals, alpha=0.6)
+    ax.scatter(y_pred[mask], residuals[mask], alpha=0.6)
     ax.axhline(0, color="red", linestyle="--", linewidth=1)
-    ax.set_title("Residual Plot (Actual - Predicted)")
+    ax.set_title("Residual Plot (Actual - Predicted, central 99% of residuals)")
     ax.set_xlabel("Predicted visitors (scaled)")
     ax.set_ylabel("Residual")
     fig.tight_layout()
@@ -54,15 +60,13 @@ def plot_residuals(model, X, y):
 # ----------------------------------------------------
 # 2. Permutation Feature Importance
 # ----------------------------------------------------
-def plot_feature_importance(model, X, y, top_n=8, min_importance=1e-3):
+def plot_feature_importance(model, X, y, top_n=8, min_importance=None):
     """
     Global feature importance using permutation importance
     on a subset of the data (faster).
 
-    Shows only the main features:
-      - sort by importance
-      - keep top_n
-      - drop features below min_importance (if possible)
+    Shows up to `top_n` most important features. Optionally
+    drops features whose importance is below `min_importance`.
     """
 
     # sample for faster XAI computation
@@ -87,25 +91,22 @@ def plot_feature_importance(model, X, y, top_n=8, min_importance=1e-3):
 
     importances = result.importances_mean
 
-    # sort & select top features
-    idx = np.argsort(importances)[::-1]  # descending
-    idx = idx[:top_n]
-    sorted_importances = importances[idx]
-    feature_names = np.array(sample.columns)[idx]
+    # sort by importance (descending)
+    idx_sorted = np.argsort(importances)[::-1]
 
-    # drop almost-zero importances if possible
-    mask = sorted_importances > min_importance
-    if mask.sum() >= 3:  # keep at least 3 if possible
-        sorted_importances = sorted_importances[mask]
-        feature_names = feature_names[mask]
+    if min_importance is not None:
+        idx_sorted = [i for i in idx_sorted if importances[i] >= min_importance]
 
-    # if everything was tiny, just keep the top 5 so the chart isn't empty
-    if len(sorted_importances) > 5:
-        sorted_importances = sorted_importances[:5]
-        feature_names = feature_names[:5]
+    # ensure we have something to plot
+    if len(idx_sorted) == 0:
+        idx_sorted = np.argsort(importances)[::-1]
+
+    idx_final = idx_sorted[:top_n]
+    sorted_importances = importances[idx_final]
+    feature_names = np.array(sample.columns)[idx_final]
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    order = np.argsort(sorted_importances)  # for nice bottom-to-top bars
+    order = np.argsort(sorted_importances)  # small to large, for bottom-to-top bars
     ax.barh(range(len(sorted_importances)), sorted_importances[order])
     ax.set_yticks(range(len(sorted_importances)))
     ax.set_yticklabels(feature_names[order])
@@ -119,7 +120,7 @@ def plot_feature_importance(model, X, y, top_n=8, min_importance=1e-3):
 # ----------------------------------------------------
 # 3. SHAP Summary Plot
 # ----------------------------------------------------
-def plot_shap_summary(model, X, max_display=10):
+def plot_shap_summary(model, X, max_display=8):
     """
     SHAP summary plot for models inside a Pipeline.
 
@@ -132,27 +133,29 @@ def plot_shap_summary(model, X, max_display=10):
     # preprocess X if needed
     if preprocessor is not None:
         X_proc = preprocessor.transform(X)
+        # try to get proper feature names from the preprocessor
+        if hasattr(preprocessor, "get_feature_names_out"):
+            feature_names = list(preprocessor.get_feature_names_out())
+        else:
+            # fall back to original column names if available
+            feature_names = list(getattr(X, "columns", [f"Feature {i+1}" for i in range(X_proc.shape[1])]))
     else:
         X_proc = X
+        feature_names = list(getattr(X, "columns", [f"Feature {i+1}" for i in range(X.shape[1])]))
 
-    # convert to dense numpy array if needed (e.g., from sparse matrix)
+    # convert to dense numpy array if needed
     if sparse.issparse(X_proc):
         X_proc = X_proc.toarray()
     else:
         X_proc = np.asarray(X_proc)
 
-    # generic feature names (after preprocessing columns can explode)
-    n_features = X_proc.shape[1]
-    feature_names = [f"Feature {i+1}" for i in range(n_features)]
-
-    # take small sample for speed
+    # small sample for speed
     n_samples = min(400, X_proc.shape[0])
     rng = np.random.RandomState(42)
     idx = rng.choice(X_proc.shape[0], n_samples, replace=False)
     X_sample = X_proc[idx]
 
     try:
-        # generic explainer works for tree, linear, etc.
         explainer = shap.Explainer(final_est, X_sample)
         shap_values = explainer(X_sample)
     except Exception:
