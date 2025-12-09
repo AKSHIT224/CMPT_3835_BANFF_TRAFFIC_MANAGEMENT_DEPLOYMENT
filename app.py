@@ -589,3 +589,18 @@ def show_rag_chatbot():
             st.markdown(f"**Q:** {item['q']}")
             st.markdown(f"**A:** {item['a']}")
             st.markdown("---")
+
+
+# -----------------------------
+# ROUTER
+# -----------------------------
+if page == "Home":
+    show_home()
+elif page == "EDA":
+    show_eda()
+elif page == "Model & Prediction":
+    show_model_and_prediction()
+elif page == "XAI":
+    show_xai()
+elif page == "RAG Chatbot":
+    show_rag_chatbot()
