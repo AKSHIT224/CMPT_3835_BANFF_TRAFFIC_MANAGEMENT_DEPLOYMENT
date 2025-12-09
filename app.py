@@ -445,7 +445,7 @@ def show_xai():
 
     # 2) Permutation feature importance (global)
     st.subheader("2. Global Feature Importance (Permutation Importance)")
-    fig_perm = plot_feature_importance(model, X_all, y_all, top_n=15)
+    fig_perm = plot_feature_importance(model, X_all, y_all, top_n=8)
     st.pyplot(fig_perm)
 
     st.markdown("---")
