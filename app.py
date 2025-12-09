@@ -29,6 +29,7 @@ st.set_page_config(
 )
 
 TARGET_COL = "daily_visits.1"  # target = tomorrow's visits (scaled)
+# Potential shortcut / leakage feature (we removed this during training)
 LEAKAGE_COLS = ["daily_visits"]   # today's visits (very close to tomorrow's)
 
 
@@ -121,29 +122,34 @@ def show_eda():
 
     st.write(
         """
-        This page shows key charts from our EDA and feature engineering work.
-        The plots below are pre-generated and loaded as images.
+        This page shows key charts from our exploratory data analysis (EDA)
+        and feature engineering for the Banff parking and visitor data.
+        The plots below are saved from our notebook and loaded as images.
         """
     )
 
+    # 1) Site / parking location counts
     st.subheader("1. Parking Site Usage Distribution")
-    st.caption("Most parking activity is concentrated on Banff Ave, with smaller volumes at other sites.")
-    st.image("assets/site_count.png", use_container_width=True)
+    st.caption("Most parking activity is concentrated on Banff Ave, with smaller volumes at other locations.")
+    st.image("Picture1.png", use_container_width=True)
 
+    # 2) Payment method share
     st.subheader("2. Payment Method Share")
-    st.caption("Majority of users pay by bank card, followed by pay-by-phone, with very little cash usage.")
-    st.image("assets/payment_method_share.png", use_container_width=True)
+    st.caption("Most users pay by bank card, followed by pay-by-phone, with very little cash usage.")
+    st.image("Picture2.png", use_container_width=True)
 
+    # 3) Parking usage by hour of day
     st.subheader("3. Parking Usage by Hour of the Day")
-    st.caption("Parking demand grows from morning, peaks around mid-day / afternoon, and then drops in the evening.")
-    st.image("assets/parking_usage_by_hour.png", use_container_width=True)
+    st.caption("Parking demand grows from morning, peaks around mid-day/afternoon, then drops in the evening.")
+    st.image("Picture3.png", use_container_width=True)
 
+    # 4) Feature correlation heatmap
     st.subheader("4. Feature Correlation with Daily Visits")
     st.caption(
-        "Correlation of engineered features with daily visitor counts. "
-        "Lag features and weekend/holiday indicators show stronger relationships."
+        "Correlation between engineered features and daily visitor counts. "
+        "Lag features and weekend/holiday indicators show stronger relationships with demand."
     )
-    st.image("assets/feature_correlation_heatmap.png", use_container_width=True)
+    st.image("Picture4.png", use_container_width=True)
 
 
 # -----------------------------
@@ -491,7 +497,7 @@ def show_rag_chatbot():
         with st.spinner("Thinking..."):
             raw_answer = rag_answer(q, df)
 
-        # Remove the "Example days from the dataset" section
+        # Remove the "Example days from the dataset" section if present
         marker = "Example days from the dataset"
         idx = raw_answer.find(marker)
         if idx != -1:
