@@ -30,27 +30,20 @@ def _split_pipeline(model):
 
 
 # ----------------------------------------------------
-# 1. Residual Plot
+# 1. Residual Plot (simple version)
 # ----------------------------------------------------
-def plot_residuals(model, X, y, clip_quantile=0.99):
+def plot_residuals(model, X, y):
     """
     Global error behaviour: residual = actual - predicted.
     Residuals are plotted against predicted values.
-    To avoid distortion by extreme outliers, we show only
-    the central `clip_quantile` fraction of residuals.
     """
     y_pred = model.predict(X)
     residuals = y - y_pred
 
-    # clip extreme residuals for nicer visualisation
-    abs_resid = np.abs(residuals)
-    limit = np.quantile(abs_resid, clip_quantile)
-    mask = abs_resid <= limit
-
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.scatter(y_pred[mask], residuals[mask], alpha=0.6)
+    ax.scatter(y_pred, residuals, alpha=0.6)
     ax.axhline(0, color="red", linestyle="--", linewidth=1)
-    ax.set_title("Residual Plot (Actual - Predicted, central 99% of residuals)")
+    ax.set_title("Residual Plot (Actual - Predicted)")
     ax.set_xlabel("Predicted visitors (scaled)")
     ax.set_ylabel("Residual")
     fig.tight_layout()
@@ -58,16 +51,16 @@ def plot_residuals(model, X, y, clip_quantile=0.99):
 
 
 # ----------------------------------------------------
-# 2. Permutation Feature Importance
+# 2. Permutation Feature Importance (top 8 only)
 # ----------------------------------------------------
-def plot_feature_importance(model, X, y, top_n=8, min_importance=None):
+def plot_feature_importance(model, X, y):
     """
     Global feature importance using permutation importance
     on a subset of the data (faster).
 
-    Shows up to `top_n` most important features. Optionally
-    drops features whose importance is below `min_importance`.
+    Shows the top 8 most important features.
     """
+    top_n = 8  # <-- fixed to 8
 
     # sample for faster XAI computation
     if len(X) > 2000:
@@ -91,22 +84,15 @@ def plot_feature_importance(model, X, y, top_n=8, min_importance=None):
 
     importances = result.importances_mean
 
-    # sort by importance (descending)
+    # sort by importance (descending) and keep top 8
     idx_sorted = np.argsort(importances)[::-1]
-
-    if min_importance is not None:
-        idx_sorted = [i for i in idx_sorted if importances[i] >= min_importance]
-
-    # ensure we have something to plot
-    if len(idx_sorted) == 0:
-        idx_sorted = np.argsort(importances)[::-1]
-
     idx_final = idx_sorted[:top_n]
+
     sorted_importances = importances[idx_final]
     feature_names = np.array(sample.columns)[idx_final]
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    order = np.argsort(sorted_importances)  # small to large, for bottom-to-top bars
+    order = np.argsort(sorted_importances)  # for bottom-to-top bars
     ax.barh(range(len(sorted_importances)), sorted_importances[order])
     ax.set_yticks(range(len(sorted_importances)))
     ax.set_yticklabels(feature_names[order])
@@ -118,7 +104,7 @@ def plot_feature_importance(model, X, y, top_n=8, min_importance=None):
 
 
 # ----------------------------------------------------
-# 3. SHAP Summary Plot
+# 3. SHAP Summary Plot (with feature names)
 # ----------------------------------------------------
 def plot_shap_summary(model, X, max_display=8):
     """
@@ -137,7 +123,6 @@ def plot_shap_summary(model, X, max_display=8):
         if hasattr(preprocessor, "get_feature_names_out"):
             feature_names = list(preprocessor.get_feature_names_out())
         else:
-            # fall back to original column names if available
             feature_names = list(getattr(X, "columns", [f"Feature {i+1}" for i in range(X_proc.shape[1])]))
     else:
         X_proc = X
@@ -159,7 +144,6 @@ def plot_shap_summary(model, X, max_display=8):
         explainer = shap.Explainer(final_est, X_sample)
         shap_values = explainer(X_sample)
     except Exception:
-        # let the Streamlit app show a friendly message if this returns None
         return None
 
     fig = plt.figure(figsize=(10, 5))
