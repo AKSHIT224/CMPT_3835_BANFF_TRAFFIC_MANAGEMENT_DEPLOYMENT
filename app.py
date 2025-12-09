@@ -127,40 +127,48 @@ def show_eda():
     )
 
     # 1) Site / parking location counts
-    st.subheader("1. Parking Site Usage Distribution")
-    st.caption(
-        "This bar chart shows how many parking records come from each site in Banff. "
-        "Taller bars mean that location is used more often and has higher parking demand. "
-        "It helps us see which streets or areas are the main pressure points for parking."
-    )
+    st.markdown("### 1. Parking Site Usage Distribution")
     st.image("Picture1.png", use_container_width=True)
+    st.markdown(
+        """
+- Shows how parking records are distributed across different sites in Banff  
+- Taller bars mean that location is used more often and has higher parking demand  
+- Helps identify which streets or areas face the most parking pressure
+"""
+    )
 
     # 2) Payment method share
-    st.subheader("2. Payment Method Share")
-    st.caption(
-        "This chart shows the percentage of each payment method (card, phone, cash) used at the meters. "
-        "We can see that electronic payments dominate, while cash is used very rarely. "
-        "This is useful for planning payment systems and deciding where physical machines are still needed."
-    )
+    st.markdown("### 2. Payment Method Share")
     st.image("Picture2.png", use_container_width=True)
+    st.markdown(
+        """
+- Displays the share of each payment type such as bank card, mobile, and cash  
+- Digital methods (card / phone) dominate, while cash usage is very small  
+- Suggests that most visitors are comfortable with contactless and app-based payments
+"""
+    )
 
     # 3) Parking usage by hour of day
-    st.subheader("3. Parking Usage by Hour of the Day")
-    st.caption(
-        "This line graph shows how parking usage changes across the hours of the day. "
-        "Counts are low in early morning, rise during the day, and peak around mid-day or afternoon. "
-        "It helps identify the main peak hours when congestion and parking pressure are highest."
-    )
+    st.markdown("### 3. Parking Usage by Hour of the Day")
     st.image("Picture3.png", use_container_width=True)
+    st.markdown(
+        """
+- Shows how parking demand changes over the hours of the day  
+- Early morning is quiet, demand rises through late morning and afternoon, then drops in the evening  
+- Helps the Town see peak hours when congestion and parking pressure are highest
+"""
+    )
 
     # 4) Feature correlation heatmap
-    st.subheader("4. Feature Correlation with Daily Visits")
-    st.caption(
-        "This heatmap shows how strongly each engineered feature is correlated with daily visitor counts. "
-        "Warmer colours (higher values) mean a stronger positive relationship with visits. "
-        "It helps us choose which features are most useful for the model, such as lags and weekend/holiday flags."
-    )
+    st.markdown("### 4. Feature Correlation with Daily Visitors")
     st.image("Picture4.png", use_container_width=True)
+    st.markdown(
+        """
+- Shows how strongly each engineered feature is correlated with daily visitor counts  
+- Warmer colours mean a stronger positive relationship with visits  
+- Confirms that lag features, rolling averages, and weekend/holiday flags are useful for prediction
+"""
+    )
 
 
 # -----------------------------
@@ -422,9 +430,9 @@ def show_xai():
         The goal of this page is to **explain how the model makes decisions**.
 
         We use:
-        - Residual plots to see error patterns
-        - Global feature importance
-        - SHAP values for top features
+        - Residual plots to see error patterns  
+        - Global feature importance  
+        - SHAP values for top features  
         """
     )
 
