@@ -29,7 +29,6 @@ st.set_page_config(
 )
 
 TARGET_COL = "daily_visits.1"  # target = tomorrow's visits (scaled)
-# Potential shortcut / leakage feature (we removed this during training)
 LEAKAGE_COLS = ["daily_visits"]   # today's visits (very close to tomorrow's)
 
 
@@ -122,32 +121,40 @@ def show_eda():
 
     st.write(
         """
-        This page shows key charts from our exploratory data analysis (EDA)
-        and feature engineering for the Banff parking and visitor data.
-        The plots below are saved from our notebook and loaded as images.
+        This page shows the main EDA and feature engineering graphs we used
+        to understand Banff parking and visitor behaviour.
         """
     )
 
     # 1) Site / parking location counts
     st.subheader("1. Parking Site Usage Distribution")
-    st.caption("Most parking activity is concentrated on Banff Ave, with smaller volumes at other locations.")
+    st.caption(
+        "This bar chart shows how many parking records come from each site. "
+        "It helps us see which areas of Banff are used the most."
+    )
     st.image("Picture1.png", use_container_width=True)
 
     # 2) Payment method share
     st.subheader("2. Payment Method Share")
-    st.caption("Most users pay by bank card, followed by pay-by-phone, with very little cash usage.")
+    st.caption(
+        "This chart shows the share of each payment type (card, phone, cash). "
+        "It tells us how visitors prefer to pay for parking."
+    )
     st.image("Picture2.png", use_container_width=True)
 
     # 3) Parking usage by hour of day
     st.subheader("3. Parking Usage by Hour of the Day")
-    st.caption("Parking demand grows from morning, peaks around mid-day/afternoon, then drops in the evening.")
+    st.caption(
+        "This line graph shows how parking usage changes by hour. "
+        "It highlights the busy hours of the day compared to quieter times."
+    )
     st.image("Picture3.png", use_container_width=True)
 
     # 4) Feature correlation heatmap
     st.subheader("4. Feature Correlation with Daily Visits")
     st.caption(
-        "Correlation between engineered features and daily visitor counts. "
-        "Lag features and weekend/holiday indicators show stronger relationships with demand."
+        "This heatmap shows how strongly each engineered feature is related to daily visitors. "
+        "Higher correlation means that feature is more useful for predicting demand."
     )
     st.image("Picture4.png", use_container_width=True)
 
@@ -410,11 +417,10 @@ def show_xai():
         """
         The goal of this page is to **explain how the model makes decisions**.
 
-        - We use **global XAI** methods to understand behaviour across the whole dataset.
-        - We focus on:
-          - Residuals (errors)
-          - Global feature importance
-          - SHAP global summary
+        We use:
+        - Residual plots to see error patterns
+        - Global feature importance
+        - SHAP values for top features
         """
     )
 
@@ -454,10 +460,9 @@ def show_rag_chatbot():
 
     st.write(
         """
-        This chatbot uses a simple Retrieval-Augmented Generation (RAG)-style pipeline.
-
-        You can either pick one of the sample questions or type your own.
-        The app will return a short, data-based answer using the Banff dataset.
+        This chatbot uses a simple Retrieval-Augmented Generation (RAG) idea.
+        It looks at the Banff dataset and gives short, data-based answers
+        to your questions.
         """
     )
 
