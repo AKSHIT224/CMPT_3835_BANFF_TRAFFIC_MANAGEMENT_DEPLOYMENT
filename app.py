@@ -521,7 +521,7 @@ def show_rag_chatbot():
         - Uses TF-IDF to retrieve the most relevant example days for your question.
         - Builds a small numeric summary (months / weekends / holidays) when your question
           is about those topics.
-        - Combines the summary and examples into a natural-language answer.
+        - Combines the summary into a natural-language answer.
 
         Everything runs locally in this app – no external AI API is called.
         """
@@ -533,10 +533,31 @@ def show_rag_chatbot():
     if "rag_history" not in st.session_state:
         st.session_state.rag_history = []
 
-    # Text input linked to session_state key
+    # -----------------------------
+    # Sample questions (click to auto-fill)
+    # -----------------------------
+    st.markdown("**Sample questions you can try:**")
+
+    q1, q2, q3, q4 = st.columns(4)
+
+    if q1.button("Do weekends have more visitors?"):
+        st.session_state.rag_question = "Do weekends have more visitors than weekdays?"
+
+    if q2.button("How does month affect visitors?"):
+        st.session_state.rag_question = "How do visitor counts change across different months?"
+
+    if q3.button("Impact of rolling 7-day average"):
+        st.session_state.rag_question = "How do the 7 day rolling averages compare to actual visitor count?"
+
+    if q4.button("Lag features explanation"):
+        st.session_state.rag_question = "How do lag 7, lag 14, and lag 30 features relate to daily visitors?"
+
+    # -----------------------------
+    # Text input
+    # -----------------------------
     st.text_input(
         "Ask a question about the Banff visitor data:",
-        placeholder="e.g., Do weekends have more visitors than weekdays?",
+        placeholder="Type your own question or click a sample above",
         key="rag_question",
     )
 
@@ -544,34 +565,27 @@ def show_rag_chatbot():
         q = (st.session_state.rag_question or "").strip()
         if q:
             with st.spinner("Thinking..."):
-                answer = rag_answer(q, df)
+                raw_answer = rag_answer(q, df)
 
-            # Save to history
+            # ---- keep only the main answer, drop example-days section ----
+            marker = "Example days from the dataset"
+            idx = raw_answer.find(marker)
+            if idx != -1:
+                answer = raw_answer[:idx].strip()
+            else:
+                answer = raw_answer.strip()
+
             st.session_state.rag_history.append({"q": q, "a": answer})
-            # (We do not reset st.session_state.rag_question here.)
 
+    # -----------------------------
+    # Conversation history
+    # -----------------------------
     st.subheader("Conversation")
 
     if not st.session_state.rag_history:
-        st.info("Ask a question above to start the conversation.")
+        st.info("Ask a question above or click a sample question to start.")
     else:
-        # Show all previous Q&A (most recent at bottom)
         for item in st.session_state.rag_history:
             st.markdown(f"**Q:** {item['q']}")
             st.markdown(f"**A:** {item['a']}")
             st.markdown("---")
-
-
-# -----------------------------
-# ROUTER
-# -----------------------------
-if page == "Home":
-    show_home()
-elif page == "EDA":
-    show_eda()
-elif page == "Model & Prediction":
-    show_model_and_prediction()
-elif page == "XAI":
-    show_xai()
-elif page == "RAG Chatbot":
-    show_rag_chatbot()
