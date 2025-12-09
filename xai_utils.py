@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.inspection import permutation_importance
 import shap
+from scipy import sparse
 
 
 # ----------------------------------------------------
@@ -19,8 +20,10 @@ def _split_pipeline(model):
 
     if hasattr(model, "named_steps"):
         steps = list(model.named_steps.items())
-        final_est = steps[-1][1]
-        for name, step in steps:
+        final_est = steps[-1][1]  # last step = estimator
+        # assume the last step before estimator that has "transform"
+        # is our preprocessor (e.g., ColumnTransformer)
+        for name, step in steps[:-1]:
             if hasattr(step, "transform"):
                 preprocessor = step
 
@@ -51,10 +54,15 @@ def plot_residuals(model, X, y):
 # ----------------------------------------------------
 # 2. Permutation Feature Importance
 # ----------------------------------------------------
-def plot_feature_importance(model, X, y, top_n=15):
+def plot_feature_importance(model, X, y, top_n=8, min_importance=1e-3):
     """
     Global feature importance using permutation importance
     on a subset of the data (faster).
+
+    Shows only the main features:
+      - sort by importance
+      - keep top_n
+      - drop features below min_importance (if possible)
     """
 
     # sample for faster XAI computation
@@ -80,16 +88,29 @@ def plot_feature_importance(model, X, y, top_n=15):
     importances = result.importances_mean
 
     # sort & select top features
-    idx = np.argsort(importances)[::-1][:top_n]
+    idx = np.argsort(importances)[::-1]  # descending
+    idx = idx[:top_n]
     sorted_importances = importances[idx]
     feature_names = np.array(sample.columns)[idx]
 
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.barh(range(len(sorted_importances)), sorted_importances[::-1])
+    # drop almost-zero importances if possible
+    mask = sorted_importances > min_importance
+    if mask.sum() >= 3:  # keep at least 3 if possible
+        sorted_importances = sorted_importances[mask]
+        feature_names = feature_names[mask]
+
+    # if everything was tiny, just keep the top 5 so the chart isn't empty
+    if len(sorted_importances) > 5:
+        sorted_importances = sorted_importances[:5]
+        feature_names = feature_names[:5]
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    order = np.argsort(sorted_importances)  # for nice bottom-to-top bars
+    ax.barh(range(len(sorted_importances)), sorted_importances[order])
     ax.set_yticks(range(len(sorted_importances)))
-    ax.set_yticklabels(feature_names[::-1])
+    ax.set_yticklabels(feature_names[order])
     ax.set_xlabel("Permutation importance (decrease in model performance)")
-    ax.set_title("Top Global Features (Permutation Importance)")
+    ax.set_title("Main Global Features (Permutation Importance)")
     ax.invert_yaxis()
     fig.tight_layout()
     return fig
@@ -98,10 +119,12 @@ def plot_feature_importance(model, X, y, top_n=15):
 # ----------------------------------------------------
 # 3. SHAP Summary Plot
 # ----------------------------------------------------
-def plot_shap_summary(model, X):
+def plot_shap_summary(model, X, max_display=10):
     """
-    SHAP summary plot for tree-based models inside a Pipeline.
-    Uses TreeExplainer on the final estimator and the preprocessed X.
+    SHAP summary plot for models inside a Pipeline.
+
+    Uses shap.Explainer on the final estimator and the preprocessed X.
+    Returns a matplotlib Figure or None if SHAP cannot be computed.
     """
 
     preprocessor, final_est = _split_pipeline(model)
@@ -109,25 +132,33 @@ def plot_shap_summary(model, X):
     # preprocess X if needed
     if preprocessor is not None:
         X_proc = preprocessor.transform(X)
-        # Generate generic names because OneHotEncoder expands columns
-        feature_names = [f"Feature {i}" for i in range(X_proc.shape[1])]
     else:
-        X_proc = X.values
-        feature_names = list(X.columns)
+        X_proc = X
+
+    # convert to dense numpy array if needed (e.g., from sparse matrix)
+    if sparse.issparse(X_proc):
+        X_proc = X_proc.toarray()
+    else:
+        X_proc = np.asarray(X_proc)
+
+    # generic feature names (after preprocessing columns can explode)
+    n_features = X_proc.shape[1]
+    feature_names = [f"Feature {i+1}" for i in range(n_features)]
 
     # take small sample for speed
-    n_samples = min(300, X_proc.shape[0])
+    n_samples = min(400, X_proc.shape[0])
     rng = np.random.RandomState(42)
     idx = rng.choice(X_proc.shape[0], n_samples, replace=False)
     X_sample = X_proc[idx]
 
     try:
-        explainer = shap.TreeExplainer(final_est)
-        shap_values = explainer.shap_values(X_sample)
+        # generic explainer works for tree, linear, etc.
+        explainer = shap.Explainer(final_est, X_sample)
+        shap_values = explainer(X_sample)
     except Exception:
-        raise RuntimeError("SHAP could not be computed for this model.")
+        # let the Streamlit app show a friendly message if this returns None
+        return None
 
-    # SHAP bar summary
     fig = plt.figure(figsize=(10, 5))
     shap.summary_plot(
         shap_values,
@@ -135,7 +166,7 @@ def plot_shap_summary(model, X):
         feature_names=feature_names,
         show=False,
         plot_type="bar",
-        max_display=15,
+        max_display=max_display,
     )
     plt.title("Top Global Features (SHAP Summary)")
     plt.tight_layout()
