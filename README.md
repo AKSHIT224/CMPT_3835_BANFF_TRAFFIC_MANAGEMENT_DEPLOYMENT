@@ -110,7 +110,7 @@ A working MVP app was created to:
 ---
 
 ## 📁 Folder Structure
-
+'''
 project/
 │── data/
 │ ├── raw/
@@ -121,7 +121,7 @@ project/
 │── app/
 │── README.md
 │── requirements.txt
-
+'''
 
 ---
 
